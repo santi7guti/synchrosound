@@ -129,7 +129,7 @@ class Mundo {
         const qt = C.norm(u.searchParams.get('q') || '').split(' ').filter(Boolean);
         const res = D.catalogo.filter(t => !t.soloConExtended || qt.indexOf('extended') >= 0).map(t => {
           const texto = ' ' + C.norm(t.name + ' ' + t.artists.map(a => a.name).join(' ')) + ' ';
-          return { t, f: qt.filter(x => texto.indexOf(' ' + x + ' ') >= 0).length / (qt.length || 1) };
+          return { t, f: qt.filter(x => texto.indexOf(x.length >= 4 ? x : ' ' + x + ' ') >= 0).length / (qt.length || 1) };
         }).filter(x => x.f >= 0.6).sort((a, b) => b.f - a.f).slice(0, 10).map(x => x.t);
         return json({ tracks: { href: req.url(), items: res, limit: 10, offset: 0, total: res.length, next: null, previous: null } });
       }

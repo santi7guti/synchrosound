@@ -9,7 +9,7 @@
   'use strict';
 
   // Súbelo cuando cambien las reglas del buscador: invalida lo emparejado con reglas viejas.
-  const MATCHER = 2;
+  const MATCHER = 3;
 
   // ---------- texto ----------
   const RARAS = { 'ø': 'o', 'đ': 'd', 'ł': 'l', 'ß': 'ss', 'æ': 'ae', 'œ': 'oe', 'ð': 'd', 'þ': 'th', 'ı': 'i' };
@@ -275,7 +275,9 @@
     if (a.who && b.who) return mismoQuien(a.who, b.who) ? largo() : { ok: false, motivo: 'otro-remix', descarta: true };
     if (a.who && !b.who) return { ok: false, motivo: 'falta-remix' };
     if (!a.who && b.who) {
-      if (a.esRemix && cobertura(rb.art, conj(toks(b.who).concat(sp.art))) >= 0.85) return largo();
+      // «Título Remix» sin decir de quién: solo se da por bueno si el remixer que nombra Spotify
+      // es el artista que figura en rekordbox. Que coincida el artista original no basta.
+      if (a.esRemix) return mismoQuien(rb.art.join(' '), b.who) ? largo() : { ok: false, motivo: 'remix-sin-nombre' };
       return { ok: false, motivo: 'es-remix' };
     }
     if (a.esRemix !== b.esRemix) return { ok: false, motivo: a.esRemix ? 'falta-remix' : 'es-remix' };
@@ -306,15 +308,31 @@
       if (V.motivo === 'sabor') m.push('es otra versión (' + (sp.tit.ver.sabores || rb.tit.ver.sabores) + ')');
       else if (V.motivo === 'falta-remix') m.push('en Spotify está la original, no ' + (rb.tit.ver.who ? 'la de ' + (rb.tit.ver.crudoWho || rb.tit.ver.who) : 'el remix'));
       else if (V.motivo === 'es-remix') m.push('en Spotify es un remix' + (sp.tit.ver.who ? ' (' + (sp.tit.ver.crudoWho || sp.tit.ver.who) + ')' : ''));
+      else if (V.motivo === 'remix-sin-nombre') m.push('tu título dice «Remix» sin decir de quién, y en Spotify es la mezcla «' + (sp.tit.ver.crudoWho || sp.tit.ver.who) + '»');
     }
     return m;
   }
 
   /* Compara una canción de rekordbox con una de Spotify.
      clase: 'seguro' (se puede añadir sola), 'dudosa' (se pregunta) o 'no'. */
+  const pega = s => String(s || '').replace(/ /g, '');
+  // ¿El título de rekordbox es el artista de Spotify y el artista de rekordbox es el título de Spotify?
+  function cambiados(rb, sp) {
+    const rbTit = pega(rb.tit.full), rbArt = pega(norm(sinPais(rb.artista))), spTit = pega(sp.tit.full);
+    if (rbTit.length < 4 || rbArt.length < 4 || spTit.length < 4) return false;
+    if (parecido(rbArt, spTit) < 0.9) return false;
+    return (sp.m.a || []).some(a => { const x = pega(norm(sinPais(a))); return x.length >= 4 && parecido(rbTit, x) >= 0.9; });
+  }
   function puntua(rb, sp) {
     const T = evalTitulo(rb.tit, sp.tit);
-    if (T.nivel === 'no') return { clase: 'no', p: 0 };
+    if (T.nivel === 'no') {
+      if (!cambiados(rb, sp)) return { clase: 'no', p: 0 };
+      const dd0 = (rb.dur && sp.dur) ? Math.abs(rb.dur - sp.dur) : 30;
+      return {
+        clase: 'dudosa', p: 70 - Math.min(20, dd0 / 6), dd: dd0, titulo: 'cambiado', artista: 'cambiado', version: 'ok',
+        nota: '', motivos: ['el artista y el título están cambiados de sitio'], otraVersion: false,
+      };
+    }
     const A = evalArtista(rb, sp);
     if (A.nivel === 'no') return { clase: 'no', p: 0 };
     const V = evalVersion(rb, sp);
@@ -357,11 +375,23 @@
     }
     ev.sort((x, y) => ((y.r.clase === 'seguro') - (x.r.clase === 'seguro')) || (y.r.p - x.r.p));
     const seguro = ev.length && ev[0].r.clase === 'seguro' ? ev[0] : null;
-    return { seguro, dudosas: seguro ? [] : ev.slice(0, 3) };
+    // La misma canción publicada en varios discos se enseña una sola vez.
+    const dudosas = [], yaVista = new Set();
+    if (!seguro) for (const e of ev) {
+      const k = aspecto(e.sp);
+      if (yaVista.has(k)) continue;
+      yaVista.add(k);
+      dudosas.push(e);
+      if (dudosas.length === 3) break;
+    }
+    return { seguro, dudosas };
   }
+  // Dos entradas de Spotify con el mismo nombre, artistas y duración se ven iguales.
+  function aspecto(sp) { return norm(sp.m.n) + '|' + norm((sp.m.a || []).join(',')) + '|' + (sp.dur || 0); }
   // Para el diagnóstico: por qué una candidata no ha valido, y las más parecidas de una lista.
   function explica(rb, sp) {
     const T = evalTitulo(rb.tit, sp.tit), A = evalArtista(rb, sp), V = evalVersion(rb, sp);
+    if (T.nivel === 'no' && cambiados(rb, sp)) return { titulo: 'cambiado', sim: 1, artista: 'cambiado', cov: 1, version: 'ok' };
     return { titulo: T.nivel, sim: T.sim || 0, artista: A.nivel, cov: A.cov || 0, version: V.ok ? 'ok' : V.motivo };
   }
   function cercanas(rb, cands, n) {
@@ -521,7 +551,7 @@
   }
 
   return {
-    MATCHER, norm, parecido, mmss, parseTitulo, descRb, descSp, minSp, claveCancion, puntua, elige, yaEsta, explica, cercanas,
+    MATCHER, norm, parecido, mmss, parseTitulo, descRb, descSp, minSp, claveCancion, puntua, elige, yaEsta, explica, cercanas, aspecto,
     consultas, consultaExtended, leeRekordbox, nombreDestino, propMapa, buscaPorNombre, sinRepartir,
   };
 });

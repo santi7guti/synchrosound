@@ -78,6 +78,13 @@ es(P({ name: 'Baja Ya', artist: 'K-lumen', dur: 300 }, { id: 'x', name: 'Baja Ya
 es(P({ name: 'Glass Harbor', artist: 'Nora Vex', dur: 372 }, { id: 'x', name: 'Glass Harbor - Mixed', artists: [{ name: 'Nora Vex' }], duration_ms: 200000 }).clase === 'dudosa', 'versión de sesión mezclada es dudosa');
 es(P({ name: 'Veneno Remix', artist: 'DJ Fulano', dur: 280 }, { id: 'x', name: 'Veneno - DJ Fulano Remix', artists: [{ name: 'Grupo Original' }], duration_ms: 281000 }).clase === 'seguro', 'remix sin nombre cuyo autor es el artista');
 es(P({ name: 'Veneno Remix', artist: 'DJ Fulano', dur: 280 }, { id: 'x', name: 'Veneno', artists: [{ name: 'DJ Fulano' }], duration_ms: 281000 }).clase === 'dudosa', 'remix sin nombre frente a original');
+es(P({ name: 'Veneno Remix', artist: 'Grupo Original, DJ Fulano', dur: 280 }, { id: 'x', name: 'Veneno - DJ Fulano Remix', artists: [{ name: 'Grupo Original' }, { name: 'DJ Fulano' }], duration_ms: 281000 }).clase === 'seguro', 'remix sin nombre cuyo remixer es uno de los artistas');
+let rv = P(D.R.veneno, D.cat.venenoRB);
+es(rv.clase === 'dudosa' && /sin decir de quién/.test(rv.motivos.join()) && /R & B/.test(rv.motivos.join()), 'remix sin nombre frente a una mezcla con nombre del mismo artista: dudosa (' + rv.clase + ')');
+rv = P(D.R.cambiada, D.cat.cambiadaSp);
+es(rv.clase === 'dudosa' && /cambiados de sitio/.test(rv.motivos.join()), 'artista y título cambiados de sitio: dudosa');
+es(P({ name: 'Novia Techno Rara', artist: 'OTRO NOMBRE', dur: 305 }, D.cat.cambiadaSp).clase === 'no', 'si solo coincide una mitad, no es un cambio de sitio');
+es(P(D.R.glass, D.cat.cambiadaSp).clase === 'no', 'canciones sin relación siguen sin valer');
 
 // --- elección entre todo el catálogo ---
 const elegida = k => C.elige(rb(D.R[k]), todo, {});
@@ -99,6 +106,9 @@ let cer = C.cercanas(rb(D.R.besos), todo, 2);
 es(cer.length === 2 && cer[0].sp.id === D.cat.besosOtro.id && cer[0].e.titulo === 'exact' && cer[0].e.artista === 'sin', 'cercanas dice qué es lo más parecido y por qué no valió');
 // con la Extended a la vista, se elige la Extended aunque rekordbox no lo diga
 es(C.elige(rb(D.R.larga), [sp(D.cat.largaCorta)], {}).seguro.sp.id === D.cat.largaCorta.id, 'sin la Extended se queda con la corta');
+// la misma canción en dos discos se enseña una vez
+cer = C.elige(rb(D.R.calma), todo, {});
+es(cer.dudosas.length === 1 && C.aspecto(sp(D.cat.calmaLarga)) === C.aspecto(sp(D.cat.calmaLarga2)), 'la misma candidata no se repite');
 // «No es» descarta esa candidata
 let e = C.elige(rb(D.R.errata), todo, { rechazadas: new Set([D.cat.conErrata.uri]) });
 es(!e.seguro && !e.dudosas.length, 'una candidata rechazada no vuelve a salir');

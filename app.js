@@ -3,7 +3,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.1.1';
+  const VERSION = '0.1.2';
   const C = window.SSCore;
 
   const CFG = {
@@ -702,7 +702,12 @@
     const d = S.mem.decisiones[u.rb.clave] || { si: null, m: null, no: [] };
     if (si === null) { d.si = null; d.m = null; d.no = []; }
     else if (si) { d.si = uri; d.m = u.cands.get(uri).m; }
-    else { if (d.no.indexOf(uri) < 0) d.no.push(uri); if (d.si === uri) { d.si = null; d.m = null; } }
+    else {
+      // «No es» descarta también las copias idénticas de esa canción en otros discos.
+      const igual = C.aspecto(u.cands.get(uri));
+      u.cands.forEach((sp, k) => { if ((k === uri || C.aspecto(sp) === igual) && d.no.indexOf(k) < 0) d.no.push(k); });
+      if (d.si && d.no.indexOf(d.si) >= 0) { d.si = null; d.m = null; }
+    }
     d.t = Date.now();
     S.mem.decisiones[u.rb.clave] = d;
     memToca();
