@@ -86,6 +86,36 @@ es(rv.clase === 'dudosa' && /cambiados de sitio/.test(rv.motivos.join()), 'artis
 es(P({ name: 'Novia Techno Rara', artist: 'OTRO NOMBRE', dur: 305 }, D.cat.cambiadaSp).clase === 'no', 'si solo coincide una mitad, no es un cambio de sitio');
 es(P(D.R.glass, D.cat.cambiadaSp).clase === 'no', 'canciones sin relación siguen sin valer');
 
+// --- texto ambiguo: solo es segura si la duración coincide ---
+rv = P(D.R.veneno, D.cat.venenoOtro);
+es(rv.clase === 'dudosa' && /«Remix» sin decir de quién/.test(rv.motivos.join()) && /letra distinta \(lunna \/ luna\)/.test(rv.motivos.join()) && /dura 6:02 en Spotify y 4:38 en rekordbox/.test(rv.motivos.join()),
+  'dos «Remix» sin nombre con duración distinta: dudosa y dice por qué (' + rv.clase + ': ' + rv.motivos.join('; ') + ')');
+es(rv.version === 'sin-nombre' && rv.artista === 'letra', 'y el diagnóstico lo distingue');
+rv = P({ name: 'Veneno Remix', artist: 'Grupo Luna', dur: 361 }, D.cat.venenoOtro);
+es(rv.clase === 'seguro' && /sin decir de quién; la duración coincide/.test(rv.nota) && rv.riesgo === 2, 'dos «Remix» sin nombre con la misma duración: segura, con nota');
+rv = P({ name: 'Veneno Remix', artist: 'Grupo Luna', dur: 365 }, D.cat.venenoOtro);
+es(rv.clase === 'seguro', 'tres segundos de diferencia cuentan como la misma duración');
+rv = P({ name: 'Veneno Remix', artist: 'Grupo Luna', dur: 366 }, D.cat.venenoOtro);
+es(rv.clase === 'dudosa', 'cuatro segundos ya no');
+rv = P({ name: 'Veneno Remix', artist: 'Grupo Luna', dur: 0 }, D.cat.venenoOtro);
+es(rv.clase === 'dudosa' && /no se puede comparar la duración/.test(rv.motivos.join()), 'sin duración en el archivo no se puede confirmar: dudosa');
+rv = P(D.R.marea, D.cat.mareaCorta);
+es(rv.clase === 'dudosa' && /letra distinta \(brandt \/ brendt\)/.test(rv.motivos.join()) && /dura 2:56 en Spotify y 6:21/.test(rv.motivos.join()) && rv.artista === 'letra' && rv.version === 'ok',
+  'artista con una letra distinta y duración distinta: dudosa (' + rv.clase + ')');
+rv = P({ name: 'Veneno Remix', artist: 'DJ Fulano', dur: 280 }, { id: 'x', name: 'Veneno - DJ Fulano Remix', artists: [{ name: 'Grupo Original' }], duration_ms: 200000 });
+es(rv.clase === 'seguro' && !/sin decir de quién/.test(rv.nota), 'si el remixer de Spotify es el artista del archivo no hay ambigüedad, aunque la duración no cuadre');
+rv = P({ name: 'Ladrillo! (Edit)', artist: 'K雨L', dur: 200 }, D.cat.ladrillo);
+es(rv.clase === 'dudosa' && /«Edit» sin decir de quién/.test(rv.motivos.join()), 'un «Edit» a secas con duración distinta: dudosa');
+rv = P({ name: 'Cobalt Avenue (Radio Edit)', artist: 'Tom Río & Søren Falk', dur: 300 }, D.cat.cobaltRadio);
+es(rv.clase === 'seguro', 'un «Radio Edit» no es ambiguo');
+rv = P({ name: 'Glass Harbor (Extended Mix)', artist: 'Nora Vex', dur: 500 }, D.cat.glass);
+es(rv.clase === 'seguro' && rv.riesgo === 1, 'sin ambigüedad, la duración sigue sin convertir en dudosa');
+// orden para repasar las seguras
+es(P({ name: 'Glass Harbor', artist: 'Nora Vex', dur: 300 }, D.cat.glass).riesgo === 3, 'riesgo 3: en Spotify dura más que el archivo');
+es(P(D.R.wait, D.cat.wait).riesgo === 2, 'riesgo 2: texto ambiguo confirmado por la duración');
+es(P(D.R.paper, D.cat.paper).riesgo === 1, 'riesgo 1: cualquier otro aviso');
+es(P(D.R.glass, D.cat.glass).riesgo === 0 && P(D.R.errata, D.cat.conErrata).riesgo === 0, 'riesgo 0: sin aviso, y las dudosas no cuentan');
+
 // --- elección entre todo el catálogo ---
 const elegida = k => C.elige(rb(D.R[k]), todo, {});
 for (const k of Object.keys(D.esperado.add)) {
@@ -117,6 +147,14 @@ let y = C.yaEsta(rb(D.R.silence), [sp(D.cat.tondo), sp(D.cat.silenceRadio)]);
 es(y && y.sp.id === D.cat.silenceRadio.id && y.r.otraVersion, 'otra versión en la playlist cuenta como ya está');
 es(!C.yaEsta(rb(D.R.velvet), [sp(D.cat.velvetOtro)]), 'un remix de otra persona no cuenta como ya está');
 es(!C.yaEsta(rb(D.R.openWater), [sp(D.cat.openWater)]), 'la original no cuenta como ya está el remix');
+es(!C.yaEsta(rb(D.R.silence), [sp(D.cat.silenceRadio)], new Set([D.cat.silenceRadio.uri])), 'una rechazada con «No es» no cuenta como ya está');
+es(!C.yaEsta(rb(D.R.marea), [sp(D.cat.mareaCorta)]), 'una pareja ambigua no cuenta como ya está sin preguntar');
+// las dos candidatas de un «Remix» sin nombre se enseñan, la que también se llama «Remix» primero
+e = C.elige(rb(D.R.veneno), todo, {});
+es(!e.seguro && e.dudosas.length === 2 && e.dudosas[0].sp.id === D.cat.venenoOtro.id && e.dudosas[1].sp.id === D.cat.venenoRB.id, 'un «Remix» sin nombre enseña las dos mezclas para elegir');
+// rechazada la segura, se pasa a la siguiente mejor
+e = C.elige(rb(D.R.extra), todo, { rechazadas: new Set([D.cat.extra.uri]) });
+es(!e.seguro && e.dudosas.length === 1 && e.dudosas[0].sp.id === D.cat.xtra.id, 'con la segura rechazada queda la siguiente como dudosa');
 
 // --- búsquedas ---
 let q = C.consultas(rb(D.R.signal));

@@ -9,7 +9,7 @@
   'use strict';
 
   // Súbelo cuando cambien las reglas del buscador: invalida lo emparejado con reglas viejas.
-  const MATCHER = 3;
+  const MATCHER = 4;
 
   // ---------- texto ----------
   const RARAS = { 'ø': 'o', 'đ': 'd', 'ł': 'l', 'ß': 'ss', 'æ': 'ae', 'œ': 'oe', 'ð': 'd', 'þ': 'th', 'ı': 'i' };
@@ -95,6 +95,7 @@
       tipo: 'ver', who, crudoWho: palabras.join(' '), largo,
       sabores: t.filter(x => SABOR.has(x)).map(x => (x === 'acappella' ? 'acapella' : x)),
       esRemix: !!who || t.some(x => REMIX.has(x)),
+      soloEdit: t.length === 1 && t[0] === 'edit', // «(Edit)» a secas: no dice de quién
     };
   }
 
@@ -120,7 +121,7 @@
     if (m && norm(m[1])) { s = m[1]; descs.push(m[2]); }
     const o = {
       base: norm(s), crudoBase: s.replace(/\s+/g, ' ').trim(), extras: [], crudoExtras: [], feats: '', pista, crudoPista,
-      ver: { who: '', crudoWho: '', largo: null, sabores: '', esRemix: false, remaster: false },
+      ver: { who: '', crudoWho: '', largo: null, sabores: '', esRemix: false, soloEdit: false, remaster: false },
     };
     const sab = new Set();
     for (const d of descs) {
@@ -133,6 +134,7 @@
         if (c.who) { o.ver.who = (o.ver.who + ' ' + c.who).trim(); o.ver.crudoWho = (o.ver.crudoWho + ' ' + c.crudoWho).trim(); }
         if (!o.ver.largo) o.ver.largo = c.largo;
         if (c.esRemix) o.ver.esRemix = true;
+        if (c.soloEdit) o.ver.soloEdit = true;
         c.sabores.forEach(x => sab.add(x));
       }
     }
@@ -277,7 +279,7 @@
     if (!a.who && b.who) {
       // «Título Remix» sin decir de quién: solo se da por bueno si el remixer que nombra Spotify
       // es el artista que figura en rekordbox. Que coincida el artista original no basta.
-      if (a.esRemix) return mismoQuien(rb.art.join(' '), b.who) ? largo() : { ok: false, motivo: 'remix-sin-nombre' };
+      if (a.esRemix) return mismoQuien(rb.art.join(' '), b.who) ? Object.assign(largo(), { porArtista: true }) : { ok: false, motivo: 'remix-sin-nombre' };
       return { ok: false, motivo: 'es-remix' };
     }
     if (a.esRemix !== b.esRemix) return { ok: false, motivo: a.esRemix ? 'falta-remix' : 'es-remix' };
@@ -285,9 +287,12 @@
   }
 
   const NOM_LARGO = { ext: 'Extended', orig: 'Original', radio: 'Radio Edit' };
-  function notaDe(rb, sp, dd, A) {
+  const letrasTxt = A => A.letras.map(x => x[0] + ' / ' + x[1]).join(', ');
+  const palabraVer = rb => (rb.tit.ver.esRemix ? 'Remix' : 'Edit');
+  function notaDe(rb, sp, dd, A, amb) {
     const p = [];
-    if (A && A.letras && A.letras.length) p.push('Artista con una letra distinta (' + A.letras.map(x => x[0] + ' / ' + x[1]).join(', ') + ')');
+    if (A && A.letras && A.letras.length) p.push('Artista con una letra distinta (' + letrasTxt(A) + ')');
+    if (amb && amb.sinNombre) p.push('Tu título dice «' + palabraVer(rb) + '» sin decir de quién; la duración coincide');
     const la = rb.tit.ver.largo, lb = sp.tit.ver.largo;
     if (la === 'ext' && lb !== 'ext') { if (dd > 10) p.push('Sin Extended en Spotify: se usa la ' + (lb === 'radio' ? 'Radio Edit' : 'Original')); }
     else if (la && lb && la !== lb) p.push('En Spotify es la ' + NOM_LARGO[lb]);
@@ -296,8 +301,14 @@
     if (rb.dur && sp.dur && dd > 20) p.push('dura ' + mmss(sp.dur) + ' en Spotify y ' + mmss(rb.dur) + ' en rekordbox');
     return p.join('; ');
   }
-  function motivosDe(rb, sp, T, A, V) {
+  function motivosDe(rb, sp, T, A, V, amb) {
     const m = [];
+    if (amb) {
+      // Texto ambiguo y la duración no lo confirma: se pregunta.
+      if (amb.sinNombre) m.push('tu título dice «' + palabraVer(rb) + '» sin decir de quién');
+      if (amb.letras) m.push('el artista se escribe con una letra distinta (' + letrasTxt(A) + ')');
+      m.push(rb.dur && sp.dur ? 'dura ' + mmss(sp.dur) + ' en Spotify y ' + mmss(rb.dur) + ' en rekordbox' : 'no se puede comparar la duración');
+    }
     if (T.nivel === 'fuzzy') m.push('el título no es idéntico');
     if (T.nivel === 'contiene') m.push('un título contiene al otro');
     if (T.nivel === 'extras') m.push('el paréntesis del título es distinto');
@@ -350,15 +361,34 @@
     p -= V.ok ? V.pen : 30;
     const dd = (rb.dur && sp.dur) ? Math.abs(rb.dur - sp.dur) : 30;
     p -= Math.min(20, dd / 6);
-    const seguro = (T.nivel === 'exact' || T.nivel === 'base') && A.nivel === 'fuerte' && V.ok;
+    const porTexto = (T.nivel === 'exact' || T.nivel === 'base') && A.nivel === 'fuerte' && V.ok;
+    /* Texto ambiguo: el título no dice de quién es el remix o el edit, o el artista se escribe con una letra
+       distinta. Ahí el texto solo no basta: se da por segura únicamente si además coincide la duración. */
+    const va = rb.tit.ver;
+    const amb = {
+      sinNombre: !va.who && (va.esRemix || va.soloEdit) && !V.porArtista,
+      letras: !!(A.letras && A.letras.length),
+    };
+    const ambigua = porTexto && (amb.sinNombre || amb.letras);
+    const durIgual = !!(rb.dur && sp.dur) && Math.abs(rb.dur - sp.dur) <= MARGEN_DUR;
+    const seguro = porTexto && (!ambigua || durIgual);
+    const duda = ambigua && !seguro ? amb : null;
+    const nota = seguro ? notaDe(rb, sp, dd, A, ambigua ? amb : null) : '';
+    // Para ordenar las seguras al repasarlas: 3 = en Spotify dura más que el archivo (lo menos habitual),
+    // 2 = texto ambiguo confirmado por la duración, 1 = cualquier otro aviso, 0 = sin aviso.
+    const masLarga = !!(rb.dur && sp.dur) && sp.dur - rb.dur > 20;
     return {
-      clase: seguro ? 'seguro' : 'dudosa', p, dd, titulo: T.nivel, artista: A.nivel, version: V.ok ? 'ok' : V.motivo,
-      nota: seguro ? notaDe(rb, sp, dd, A) : '', motivos: seguro ? [] : motivosDe(rb, sp, T, A, V),
+      clase: seguro ? 'seguro' : 'dudosa', p, dd, titulo: T.nivel,
+      artista: duda && amb.letras ? 'letra' : A.nivel,
+      version: V.ok ? (duda && amb.sinNombre ? 'sin-nombre' : 'ok') : V.motivo,
+      nota, motivos: seguro ? [] : motivosDe(rb, sp, T, A, V, duda),
       otraVersion: seguro && dd > 20,
+      riesgo: seguro ? (masLarga ? 3 : ambigua ? 2 : nota ? 1 : 0) : 0,
     };
   }
 
   const UMBRAL_DUDA = 35;
+  const MARGEN_DUR = 3; // segundos de diferencia con los que dos duraciones cuentan como la misma
   /* Elige entre candidatas. opts.rechazadas: uris marcadas «No es»; opts.enCasa: ids de su biblioteca. */
   function elige(rb, cands, opts) {
     opts = opts || {};
@@ -399,9 +429,10 @@
       .sort((x, y) => y.k - x.k).slice(0, n || 2);
   }
   // ¿Está ya esta canción (u otra versión de la misma) en una lista de canciones de Spotify?
-  function yaEsta(rb, lista) {
+  function yaEsta(rb, lista, rechazadas) {
     let mejor = null;
     for (const sp of lista) {
+      if (rechazadas && rechazadas.has(sp.uri)) continue; // «No es»: que esté en la playlist no cuenta
       const r = puntua(rb, sp);
       if (r.clase === 'seguro' && (!mejor || r.p > mejor.r.p)) mejor = { sp, r };
     }

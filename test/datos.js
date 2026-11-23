@@ -47,7 +47,13 @@ const cat = {
   calmaLarga: pista('Calma, Tómatelo Con Calma', ['Mila Ros'], 220),
   calmaLarga2: pista('Calma, Tómatelo Con Calma', ['Mila Ros'], 220), // la misma, en otro disco
   cambiadaSp: pista('PACO ALTO', ['noviatechnorara', 'Pol Lebay'], 305),
-  venenoRB: pista('Veneno - R & B Mix', ['Grupo Bel'], 265),
+  venenoRB: pista('Veneno - R & B Mix', ['Grupo Luna'], 259),
+  // otro remix que también se llama «Remix» a secas, de otra gente y con otra duración
+  venenoOtro: pista('Veneno - Remix', ['Grupo Luna', 'Hermanos Jota'], 362),
+  // mismo título, artista con una letra distinta y una duración que no cuadra
+  mareaCorta: pista('Marea Baja', ['NICO BRENDT'], 176),
+  // en Spotify dura bastante más que el archivo: segura, pero la primera que conviene repasar
+  rioLarga: pista('Río Arriba', ['Selva Nord'], 301),
   besosOtro: pista('B.E.S.O.S', ['Banda Equis'], 315),
   altoOtro: pista('Alto', ['Brown Cult'], 177),
   // sueltas para likes y Soundeo
@@ -98,7 +104,9 @@ const R = {
   besos: rb('Besos (Nolo Remix)', '', 289),
   alto: rb('ALTO', 'Browen, DJ Libre', 243),
   cambiada: rb('Novia Techno Rara', 'PACO ALTO', 305),
-  veneno: rb('Veneno Remix', 'Grupo Bell', 285),
+  veneno: rb('Veneno Remix', 'Grupo Lunna', 278),
+  marea: rb('Marea Baja', 'Nico Brandt', 381),
+  rio: rb('Río Arriba', 'Selva Nord', 214),
   nube: rb('Algo de SoundCloud', 'Nube', 300, { kind: 'Unknown Format', loc: 'file://localhost/soundcloud:tracks:123456' }),
   sample: rb('Sirena', '', 4, { kind: 'WAV File', loc: 'file://localhost/C:/Users/x/rekordbox/Sampler/OSC_SAMPLER/Sirena.wav' }),
   vieja: rb('Canción Vieja', 'Alguien', 300),
@@ -107,7 +115,7 @@ const esc = s => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replac
 const arbol = {
   ns: {
     'House': ['glass', 'paper', 'cobalt', 'errata', 'cumbia', 'perdon', 'extra', 'xtra', 'baila', 'wait', 'nube', 'larga', 'calma', 'besos', 'alto', 'cambiada', 'veneno'],
-    'Techno': ['bus', 'velvet', 'openWater', 'tool', 'ladrillo', 'moveOn', 'current', 'sunrise'],
+    'Techno': ['bus', 'velvet', 'openWater', 'tool', 'ladrillo', 'moveOn', 'current', 'sunrise', 'marea', 'rio'],
     'Raw/UK Garage': ['velvet'],
     'Chill': ['glass'],
   },
@@ -163,10 +171,10 @@ const likes = [
 
 // Qué tiene que salir de la simulación.
 const esperado = {
-  unicas: 27,
+  unicas: 29,
   ya: ['glass', 'tondo', 'silence'],
-  add: { paper: 'paper', cobalt: 'cobaltExt', bus: 'busExt', velvet: 'velvetRmx', signal: 'signal', ladrillo: 'ladrillo', extra: 'extra', xtra: 'xtra', baila: 'bailaExt', wait: 'wait', moveOn: 'moveOn', larga: 'largaExt' },
-  duda: { openWater: 'openWater', errata: 'conErrata', cumbia: 'cumbia', perdon: 'perdon', current: 'currentInst', calma: 'calmaLarga', cambiada: 'cambiadaSp', veneno: 'venenoRB' },
+  add: { paper: 'paper', cobalt: 'cobaltExt', bus: 'busExt', velvet: 'velvetRmx', signal: 'signal', ladrillo: 'ladrillo', extra: 'extra', xtra: 'xtra', baila: 'bailaExt', wait: 'wait', moveOn: 'moveOn', larga: 'largaExt', rio: 'rioLarga' },
+  duda: { openWater: 'openWater', errata: 'conErrata', cumbia: 'cumbia', perdon: 'perdon', current: 'currentInst', calma: 'calmaLarga', cambiada: 'cambiadaSp', veneno: 'venenoOtro', marea: 'mareaCorta' },
   no: ['tool', 'sunrise', 'besos', 'alto'],
   sinRepartir: ['like1', 's2', 's1'],
 };

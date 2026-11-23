@@ -3,7 +3,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.1.2';
+  const VERSION = '0.1.3';
   const C = window.SSCore;
 
   const CFG = {
@@ -587,7 +587,7 @@
       d.ya = null;
       const pl = d.spId && idx.porPl.get(d.spId);
       if (!pl) continue;
-      const y = C.yaEsta(rb, pl.descs);
+      const y = C.yaEsta(rb, pl.descs, rech);
       if (y) { d.ya = y; mete(y.sp); }
     }
     u.elegida = null; u.dudosas = []; u.porTi = false;
@@ -715,6 +715,22 @@
     pinta();
   }
 
+  // Las seguras se repasan mejor con las de aviso arriba: primero las que en Spotify duran más que el
+  // archivo (lo menos habitual), luego el resto de avisos de mayor a menor diferencia de duración.
+  const riesgoDe = u => (u.porTi || !u.elegida ? 0 : (u.elegida.r.riesgo || 0));
+  function porRiesgo(lista) {
+    return lista.map((u, i) => ({ u, i, k: riesgoDe(u), dd: (u.elegida && u.elegida.r.dd) || 0 }))
+      .sort((a, b) => (b.k - a.k) || (a.k ? b.dd - a.dd : 0) || (a.i - b.i)).map(x => x.u);
+  }
+  // «No es» sobre una pareja que la app daba por buena (segura o «ya está»).
+  function descarta(u, sp) {
+    const antes = u.estado;
+    decide(u, sp.uri, false);
+    aviso(u.estado === antes
+      ? 'Descartada. Para «' + u.rb.nombre + '» queda otra canción de Spotify: mírala.'
+      : 'Descartada. «' + u.rb.nombre + '» pasa a «' + CAT[u.estado] + '»; ahí puedes deshacerlo.');
+  }
+
   // ---------------- botón C: sin repartir ----------------
   function calculaC() {
     const s = soundeoActual();
@@ -804,7 +820,7 @@
       const de = e => S.sim.unicas.filter(u => u.estado === e);
       p('Dudosas (' + de('duda').length + '):');
       de('duda').slice(0, 80).forEach(u => {
-        p('  RB ' + lineaRb(u.rb) + ' [' + C.mmss(u.rb.dur) + ']');
+        p('  RB ' + lineaRb(u.rb) + ' [' + C.mmss(u.rb.dur) + ']' + (u.decidida ? ' [con respuesta tuya]' : ''));
         u.dudosas.forEach(d => p('     ? ' + lineaSp(d.sp.m) + ' [' + C.mmss(d.sp.dur) + '] p=' + Math.round(d.r.p) + ' t=' + d.r.titulo + ' a=' + d.r.artista + ' v=' + d.r.version));
       });
       p('No están (' + de('no').length + '); con ~ lo más parecido que devolvió Spotify:');
@@ -814,7 +830,8 @@
           p('     ~ ' + lineaSp(c.sp.m) + ' [' + C.mmss(c.sp.dur) + '] t=' + c.e.titulo + ' a=' + c.e.artista + ' v=' + c.e.version));
       });
       p('Se añadirían (' + de('add').length + '):');
-      de('add').forEach(u => p('  ' + lineaRb(u.rb) + ' [' + C.mmss(u.rb.dur) + '] -> ' + lineaSp(u.elegida.sp.m) + ' [' + C.mmss(u.elegida.sp.dur) + ']' + (u.elegida.r.nota ? ' | ' + u.elegida.r.nota : '')));
+      p('  con aviso ' + de('add').filter(u => riesgoDe(u) > 0).length + ', que van primero (r3 = en Spotify dura más que el archivo)');
+      porRiesgo(de('add')).forEach(u => p('  ' + (riesgoDe(u) ? 'r' + riesgoDe(u) + ' ' : '') + lineaRb(u.rb) + ' [' + C.mmss(u.rb.dur) + '] -> ' + lineaSp(u.elegida.sp.m) + ' [' + C.mmss(u.elegida.sp.dur) + ']' + (u.elegida.r.nota ? ' | ' + u.elegida.r.nota : '')));
       p('Ya están (' + de('ya').length + '):');
       de('ya').forEach(u => {
         const y = u.destinos.find(d => d.ya).ya;
@@ -945,18 +962,19 @@
     const cab = h('div', { class: 'fila-titulo' }, lineaRb(rb), h('span', { class: 'dur' }, C.mmss(rb.dur)));
     const abrir = sp => enlace('Abrir en Spotify', 'https://open.spotify.com/track/' + encodeURIComponent(sp.id));
     const deshacer = u.decidida && boton('Deshacer mi respuesta', () => decide(u, null, null), 'mini sec');
+    const noEs = sp => boton('No es', () => descarta(u, sp), 'mini sec');
     let cuerpo;
     if (u.estado === 'add') {
       const e = u.elegida;
       cuerpo = [h('div', { class: 'fila-sub' }, 'En Spotify: ' + lineaSp(e.sp.m), h('span', { class: 'dur' }, C.mmss(e.sp.dur))),
         e.r.nota && h('div', { class: 'fila-nota' }, e.r.nota),
         h('div', { class: 'fila-sub' }, 'Iría a: ' + destinosDe(u, true)),
-        h('div', { class: 'fila-acc' }, abrir(e.sp), deshacer)];
+        h('div', { class: 'fila-acc' }, noEs(e.sp), abrir(e.sp), deshacer)];
     } else if (u.estado === 'ya') {
       const y = u.destinos.find(d => d.ya).ya;
       cuerpo = [h('div', { class: 'fila-sub' }, 'En Spotify: ' + lineaSp(y.sp.m), h('span', { class: 'dur' }, C.mmss(y.sp.dur))),
         y.r.otraVersion && h('div', { class: 'fila-nota' }, 'Es otra versión de la misma canción; cuenta como que ya está.'),
-        h('div', { class: 'fila-sub' }, 'Está en: ' + destinosDe(u, false)), h('div', { class: 'fila-acc' }, abrir(y.sp), deshacer)];
+        h('div', { class: 'fila-sub' }, 'Está en: ' + destinosDe(u, false)), h('div', { class: 'fila-acc' }, noEs(y.sp), abrir(y.sp), deshacer)];
     } else if (u.estado === 'duda') {
       cuerpo = [u.dudosas.map(d => h('div', { class: 'cand' },
         h('div', { class: 'fila-sub' }, lineaSp(d.sp.m), h('span', { class: 'dur' }, C.mmss(d.sp.dur))),
@@ -1009,7 +1027,14 @@
     }
     if (S.sim) {
       const c = cuenta(S.sim), filtro = S.simFiltro;
-      const lista = S.sim.unicas.filter(u => u.estado === filtro);
+      let lista = S.sim.unicas.filter(u => u.estado === filtro);
+      let conAviso = 0, filas;
+      if (filtro === 'add') {
+        lista = porRiesgo(lista);
+        conAviso = lista.filter(u => riesgoDe(u) > 0).length;
+        filas = lista.map(filaSim);
+        if (conAviso && conAviso < lista.length) filas.splice(conAviso, 0, h('li', { class: 'corte' }, 'Sin aviso: ' + (lista.length - conAviso)));
+      } else filas = lista.map(filaSim);
       out.push(h('section', { class: 'bloque' },
         h('h2', null, 'Resultado'),
         h('p', { class: 'estado' + (S.sim.incompleta ? ' mal' : '') }, (S.sim.incompleta ? 'Simulación incompleta (' + S.sim.hechas + ' de ' + S.sim.unicas.length + '). ' : '') + canciones(S.sim.unicas.length) + ' distintas en rekordbox. Simulación del ' + fechaHora(S.sim.fecha) + ': no se ha cambiado nada en Spotify.'),
@@ -1018,8 +1043,11 @@
           h('button', { class: 'filtro cat-' + k + (filtro === k ? ' activo' : ''), type: 'button', role: 'tab', 'aria-selected': filtro === k ? 'true' : 'false', onclick: () => { S.simFiltro = k; pinta(); } },
             h('span', { class: 'filtro-num' }, String(c[k])), CAT[k]))),
         filtro === 'duda' && lista.length > 0 && h('p', { class: 'nota' }, 'En esta fase «Añadir» solo guarda tu respuesta para cuando se pueda escribir; no cambia nada en Spotify. «No es» descarta esa candidata.'),
+        filtro === 'add' && lista.length > 0 && h('p', { class: 'nota' }, (conAviso ? 'Arriba van las ' + conAviso + ' que llevan aviso; primero las que en Spotify duran más que tu archivo, que es lo menos habitual. ' : '') +
+          '«No es» descarta esa canción de Spotify para tu archivo: se recuerda y se puede deshacer.'),
+        filtro === 'ya' && lista.length > 0 && h('p', { class: 'nota' }, '«No es» sirve si la que está en la playlist no es la tuya: deja de contar como que ya está.'),
         filtro === 'no' && lista.length > 0 && h('p', { class: 'nota' }, 'Se vuelven a buscar en cada simulación.'),
-        lista.length ? h('ul', { class: 'lista' }, lista.map(filaSim)) : h('p', { class: 'estado' }, 'Nada en esta lista.')));
+        lista.length ? h('ul', { class: 'lista' }, filas) : h('p', { class: 'estado' }, 'Nada en esta lista.')));
     }
     return out;
   }

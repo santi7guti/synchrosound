@@ -57,7 +57,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
 
   // --- arranque ---
   let t = await cuerpo(page);
-  es(/v0\.1\.2/.test(t), 'se ve el número de versión');
+  es(/v0\.1\.3/.test(t), 'se ve el número de versión');
   es(/Solo lectura/.test(t), 'se ve el indicador de solo lectura');
   es(/Sin conectar en este dispositivo/.test(t), 'empieza sin conectar');
   await foto(page, 'cuentas-vacio' + sufijo);
@@ -81,7 +81,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   await eligeXml(page);
   t = await cuerpo(page);
   es(/Notas\.txt/.test(t) === false, 'la lista de XML no enseña archivos que no lo son');
-  es(/30 entradas/.test(t) && /4 playlists New School y 2 Old Gems/.test(t), 'lee la colección y las playlists del mapa');
+  es(/32 entradas/.test(t) && /4 playlists New School y 2 Old Gems/.test(t), 'lee la colección y las playlists del mapa');
   es(/Ignoradas: 1 de SoundCloud y 1 sample\./.test(t), 'ignora SoundCloud y samples');
   await foto(page, 'cuentas' + sufijo);
 
@@ -113,7 +113,10 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   await simula(page);
   let n = await numeros(page);
   const E = D.esperado;
-  es(n.add === Object.keys(E.add).length && n.duda === Object.keys(E.duda).length && n.no === E.no.length && n.ya === E.ya.length, 'recuento de la simulación: ' + JSON.stringify(n));
+  const nA = Object.keys(E.add).length, nD = Object.keys(E.duda).length, nN = E.no.length, nY = E.ya.length;
+  // recuento respecto al de partida: (se añadirían, dudosas, no están, ya están)
+  const cuadra = (n, a, d, no, y) => n.add === nA + a && n.duda === nD + d && n.no === nN + no && n.ya === nY + y;
+  es(cuadra(n, 0, 0, 0, 0), 'recuento de la simulación: ' + JSON.stringify(n));
   let est = await estados(page);
   es(est.length === E.unicas, 'canciones distintas: ' + est.length);
   const de = k => est.find(x => x.n === D.R[k].name);
@@ -142,9 +145,35 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   const filaCobalt = page.locator('.fila.cat-add', { hasText: 'Cobalt Avenue (Extended Mix)' });
   es(/Iría a: NS - House, OG - All/.test(await filaCobalt.innerText()), 'una Old Gem que también está en New School va a las dos playlists');
   es(/Cobalt Avenue - Extended Mix/.test(await filaCobalt.innerText()), 'enseña la versión de Spotify elegida');
+  // las seguras con aviso van arriba, y primero la que en Spotify dura más que el archivo
+  const orden = await page.evaluate(() => Array.from(document.querySelectorAll('.lista:not(.mapa) > li')).map(li => (li.classList.contains('corte') ? 'corte' : (li.querySelector('.fila-nota') ? 'aviso:' : 'limpia:') + li.querySelector('.fila-titulo').textContent)));
+  const iCorte = orden.indexOf('corte');
+  es(iCorte > 0 && orden.slice(0, iCorte).every(x => /^aviso:/.test(x)) && orden.slice(iCorte + 1).every(x => /^limpia:/.test(x)), 'las seguras con aviso van arriba y un corte las separa del resto');
+  es(/^aviso:Selva Nord — Río Arriba/.test(orden[0]), 'la primera es la que en Spotify dura más que el archivo (' + orden[0] + ')');
+  es(orden.findIndex(x => /No Puedo Esperar/.test(x)) < orden.findIndex(x => /Paper Lanterns/.test(x)), 'después las de texto ambiguo confirmado por la duración, y luego el resto de avisos');
+  t = await cuerpo(page);
+  es(new RegExp('Arriba van las ' + iCorte + ' que llevan aviso').test(t) && new RegExp('Sin aviso: ' + (nA - iCorte)).test(t), 'la lista dice cuántas llevan aviso');
+  es(/«No es» descarta esa canción de Spotify para tu archivo/.test(t), 'y explica el «No es» de las seguras');
   // otra versión ya presente
   await page.locator('.filtro.cat-ya').click();
   es(/Es otra versión de la misma canción/.test(await page.locator('.fila.cat-ya', { hasText: 'Radio Silence' }).innerText()), 'otra versión en la playlist cuenta como ya está y se dice');
+
+  // --- «No es» en lo que la app daba por bueno ---
+  // una que «ya está»: deja de contar, y se puede deshacer
+  await page.locator('.fila.cat-ya', { hasText: 'Radio Silence' }).getByRole('button', { name: 'No es', exact: true }).click();
+  n = await numeros(page);
+  es(cuadra(n, 0, 0, 1, -1), '«No es» en una que ya está: deja de contar como que está: ' + JSON.stringify(n));
+  es(/Descartada\. «Radio Silence \(Extended Mix\)» pasa a «No están en Spotify»; ahí puedes deshacerlo/.test(await cuerpo(page)), 'y dice adónde ha ido');
+  await page.locator('.filtro.cat-no').click();
+  await page.locator('.fila.cat-no', { hasText: 'Radio Silence' }).getByRole('button', { name: 'Deshacer mi respuesta', exact: true }).click();
+  n = await numeros(page);
+  es(cuadra(n, 0, 0, 0, 0), 'y al deshacerlo vuelve a estar: ' + JSON.stringify(n));
+  // una segura: pasa a preguntarse por la siguiente candidata; se deja así hasta después de recargar
+  await page.locator('.filtro.cat-add').click();
+  await page.locator('.fila.cat-add', { hasText: 'Mill Life Extra' }).getByRole('button', { name: 'No es', exact: true }).click();
+  n = await numeros(page);
+  es(cuadra(n, -1, 1, 0, 0), '«No es» en una segura la saca de «Se añadirían»: ' + JSON.stringify(n));
+  es(/Descartada\. «Mill Life Extra» pasa a «Dudosas»/.test(await cuerpo(page)), 'y dice adónde ha ido');
 
   // --- dudosas: Añadir y No es ---
   await page.locator('.filtro.cat-duda').click();
@@ -153,9 +182,11 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   await page.locator('.fila.cat-duda', { hasText: 'Midnigth Train' }).getByRole('button', { name: 'Añadir', exact: true }).click();
   await page.locator('.fila.cat-duda', { hasText: 'Open Water' }).getByRole('button', { name: 'No es', exact: true }).click();
   n = await numeros(page);
-  es(n.add === 13 && n.duda === 6 && n.no === 5 && n.ya === 3, 'tras responder dos dudosas: ' + JSON.stringify(n));
+  es(cuadra(n, 0, -1, 1, 0), 'tras responder dos dudosas: ' + JSON.stringify(n));
   es(/cambiados de sitio/.test(await page.locator('.fila.cat-duda', { hasText: 'Novia Techno Rara' }).innerText()), 'artista y título cambiados: sale como dudosa y lo explica');
   es(/sin decir de quién/.test(await page.locator('.fila.cat-duda', { hasText: 'Veneno Remix' }).innerText()), 'remix sin nombre: sale como dudosa y lo explica');
+  es(await page.locator('.fila.cat-duda', { hasText: 'Veneno Remix' }).locator('.cand').count() === 2 && /dura 6:02 en Spotify y 4:38 en rekordbox/.test(await page.locator('.fila.cat-duda', { hasText: 'Veneno Remix' }).innerText()), 'y enseña las dos mezclas, con la duración que no cuadra');
+  es(/el artista se escribe con una letra distinta \(brandt \/ brendt\); dura 2:56 en Spotify y 6:21 en rekordbox/.test(await page.locator('.fila.cat-duda', { hasText: 'Marea Baja' }).innerText()), 'artista con una letra distinta y otra duración: se pregunta');
   es(await page.locator('.fila.cat-duda', { hasText: 'Mila Ros' }).locator('.cand').count() === 1, 'la misma candidata en dos discos se enseña una vez');
   await page.waitForFunction(() => true, null, { timeout: 1 }).catch(() => {});
   await page.waitForTimeout(2500); // la memoria se guarda sola al cabo de un momento
@@ -163,6 +194,9 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   const clDis = Object.keys(mem.decisiones).find(k => /midnigth/.test(k)), clOpen = Object.keys(mem.decisiones).find(k => /open water/.test(k));
   es(clDis && mem.decisiones[clDis].si === D.cat.conErrata.uri, 'la respuesta «Añadir» queda en la memoria de Dropbox');
   es(clOpen && mem.decisiones[clOpen].no[0] === D.cat.openWater.uri && !mem.decisiones[clOpen].si, 'la respuesta «No es» queda en la memoria');
+  const clExtra = Object.keys(mem.decisiones).find(k => /mill life extra/.test(k)), clSil = Object.keys(mem.decisiones).find(k => /radio silence/.test(k));
+  es(clExtra && mem.decisiones[clExtra].no.indexOf(D.cat.extra.uri) >= 0, 'el «No es» de una segura queda en la memoria');
+  es(clSil && mem.decisiones[clSil].no.length === 0 && !mem.decisiones[clSil].si, 'y uno deshecho no deja nada');
   es(Object.keys(mem.pares).length >= 14, 'los emparejamientos seguros quedan apuntados (' + Object.keys(mem.pares).length + ')');
   es(mundo.archivos.has('/memoria/cache-busquedas.json'), 'la caché de búsquedas se guarda en Dropbox');
   es(!/acceso|refresco/.test(mundo.archivos.get('/memoria/memoria.json').texto), 'la memoria no lleva tokens');
@@ -177,17 +211,23 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   const bus2 = mundo.busquedas;
   await simula(page);
   n = await numeros(page);
-  es(n.add === 13 && n.duda === 6 && n.no === 5 && n.ya === 3, 'tras recargar, las respuestas siguen: ' + JSON.stringify(n));
+  es(cuadra(n, 0, -1, 1, 0), 'tras recargar, las respuestas siguen: ' + JSON.stringify(n));
   es(mundo.busquedas === bus2, 'la segunda simulación no repite búsquedas (caché): ' + (mundo.busquedas - bus2));
+  est = await estados(page);
+  es(est.find(x => x.n === 'Mill Life Extra').e === 'duda' && est.find(x => x.n === 'Mill Life Extra').sp === D.cat.xtra.id, 'la segura rechazada sigue rechazada tras recargar y simular');
+  await page.locator('.filtro.cat-duda').click();
+  await page.locator('.fila.cat-duda', { hasText: 'Mill Life Extra' }).getByRole('button', { name: 'Deshacer mi respuesta', exact: true }).click();
+  n = await numeros(page);
+  es(cuadra(n, 1, -2, 1, 0), 'y al deshacerlo vuelve a «Se añadirían»: ' + JSON.stringify(n));
   await page.locator('.filtro.cat-add').click();
   es(/Confirmada por ti/.test(await page.locator('.fila.cat-add', { hasText: 'Midnigth Train' }).innerText()), 'la confirmada por ti se distingue');
   await page.locator('.fila.cat-add', { hasText: 'Midnigth Train' }).getByRole('button', { name: 'Deshacer mi respuesta', exact: true }).click();
   n = await numeros(page);
-  es(n.add === 12 && n.duda === 7, 'se puede deshacer una respuesta: ' + JSON.stringify(n));
+  es(cuadra(n, 0, -1, 1, 0), 'se puede deshacer una respuesta: ' + JSON.stringify(n));
   await page.locator('.filtro.cat-duda').click();
   await page.locator('.fila.cat-duda', { hasText: 'Mila Ros' }).getByRole('button', { name: 'No es', exact: true }).click();
   n = await numeros(page);
-  es(n.duda === 6 && n.no === 6, 'un solo «No es» descarta también la copia idéntica: ' + JSON.stringify(n));
+  es(cuadra(n, 0, -2, 2, 0), 'un solo «No es» descarta también la copia idéntica: ' + JSON.stringify(n));
 
   // --- cambiar el mapa a mano ---
   await page.locator('select[aria-label="Playlist de Spotify para Chill"]').selectOption({ label: 'VARIOS - Otra' });
@@ -197,7 +237,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   await page.waitForFunction(() => /1 playlist de rekordbox sin pareja/.test(document.body.innerText));
   await simula(page);
   n = await numeros(page);
-  es(n.add === 12 && n.duda === 6 && n.no === 6 && n.ya === 3 && mundo.busquedas === bus2, 'tras tocar el mapa se simula de nuevo sin búsquedas nuevas: ' + JSON.stringify(n));
+  es(cuadra(n, 0, -2, 2, 0) && mundo.busquedas === bus2, 'tras tocar el mapa se simula de nuevo sin búsquedas nuevas: ' + JSON.stringify(n));
 
   // --- botón C ---
   await pestana(page, 'Sin repartir');
@@ -230,16 +270,18 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   // --- diagnóstico ---
   await pestana(page, 'Diagnóstico');
   const diag = await page.locator('#diag').inputValue();
-  es(/SynchroSound 0\.1\.2/.test(diag) && /buscador v3/.test(diag) && /escrituras enviadas: 0/.test(diag) && /Simulación/.test(diag) && /Dudosas \(6\)/.test(diag), 'el diagnóstico lleva versión, recuentos y dudosas');
-  es(/Se añadirían \(12\):/.test(diag) && Object.keys(E.add).every(k => diag.indexOf(D.R[k].name) >= 0), 'el diagnóstico lista todas las que se añadirían');
-  es(/Ya están \(3\):/.test(diag) && /Radio Silence.*otra versión/.test(diag), 'el diagnóstico lista las que ya están');
-  es(/No están \(6\)/.test(diag) && /~ Banda Equis — B\.E\.S\.O\.S \[5:15\] t=exact a=sin v=falta-remix/.test(diag), 'el diagnóstico enseña lo más parecido a las que no están y por qué no valió');
+  es(/SynchroSound 0\.1\.3/.test(diag) && /buscador v4/.test(diag) && /escrituras enviadas: 0/.test(diag) && /Simulación/.test(diag) && diag.indexOf('Dudosas (' + (nD - 2) + ')') >= 0, 'el diagnóstico lleva versión, recuentos y dudosas');
+  es(diag.indexOf('Se añadirían (' + nA + '):') >= 0 && Object.keys(E.add).every(k => diag.indexOf(D.R[k].name) >= 0), 'el diagnóstico lista todas las que se añadirían');
+  es(/Se añadirían \(\d+\):\n  con aviso \d+, que van primero[^\n]*\n  r3 Selva Nord — Río Arriba \[3:34\] -> Selva Nord — Río Arriba \[5:01\] \| dura 5:01 en Spotify y 3:34 en rekordbox/.test(diag), 'y las ordena igual que la pantalla, con su nivel de aviso');
+  es(/\? Grupo Luna, Hermanos Jota — Veneno - Remix \[6:02\] p=\d+ t=exact a=letra v=sin-nombre/.test(diag), 'el diagnóstico dice por qué una pareja ambigua es dudosa');
+  es(diag.indexOf('Ya están (' + nY + '):') >= 0 && /Radio Silence.*otra versión/.test(diag), 'el diagnóstico lista las que ya están');
+  es(diag.indexOf('No están (' + (nN + 2) + ')') >= 0 && /~ Banda Equis — B\.E\.S\.O\.S \[5:15\] t=exact a=sin v=falta-remix/.test(diag), 'el diagnóstico enseña lo más parecido a las que no están y por qué no valió');
   const secretos = await page.evaluate(() => [window.SS.estado.sp.a, window.SS.estado.sp.r, window.SS.estado.db.a, window.SS.estado.db.r]);
   es(secretos.every(s => s && diag.indexOf(s) < 0) && !/refresco-secreto|acceso-\d/.test(diag), 'el diagnóstico no lleva tokens');
   es(diag.indexOf('usuario_prueba') < 0 && diag.indexOf('ejemplo.test') < 0, 'el diagnóstico no lleva el usuario ni el correo');
   await boton(page, 'Copiar').click();
   const porta = await page.evaluate(() => navigator.clipboard.readText()).catch(() => null);
-  if (porta !== null) es(porta.indexOf('SynchroSound 0.1.2') === 0, 'el botón Copiar copia el diagnóstico');
+  if (porta !== null) es(porta.indexOf('SynchroSound 0.1.3') === 0, 'el botón Copiar copia el diagnóstico');
   await foto(page, 'diagnostico' + sufijo);
 
   // --- el candado ---
