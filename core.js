@@ -9,7 +9,7 @@
   'use strict';
 
   // Súbelo cuando cambien las reglas del buscador: invalida lo emparejado con reglas viejas.
-  const MATCHER = 1;
+  const MATCHER = 2;
 
   // ---------- texto ----------
   const RARAS = { 'ø': 'o', 'đ': 'd', 'ł': 'l', 'ß': 'ss', 'æ': 'ae', 'œ': 'oe', 'ð': 'd', 'þ': 'th', 'ı': 'i' };
@@ -162,14 +162,19 @@
   }
   /* Qué parte (0..1) de `mios` aparece en `cand`, pesando por longitud y perdonando
      una letra cambiada («marten»/«martan») y nombres pegados o separados («dos mitades»/«dosmitades»). */
-  function cobertura(mios, cand) {
+  function cobertura(mios, cand, letras) {
     if (!mios.length) return 0;
     const cub = mios.map(t => {
       if (cand.set.has(t)) return true;
       if (t.length < 4) return false;
-      return cand.lista.some(c =>
-        (c.length > t.length && c.includes(t) && t.length >= 0.6 * c.length) ||
-        (t.length >= 5 && Math.abs(c.length - t.length) <= 1 && lev(c, t) <= 1));
+      for (const c of cand.lista) {
+        if (c.length > t.length && c.includes(t) && t.length >= 0.6 * c.length) return true;
+        if (t.length >= 5 && Math.abs(c.length - t.length) <= 1 && lev(c, t) <= 1) {
+          if (letras) letras.push([t, c]); // p. ej. un artista que cambió una letra de su nombre
+          return true;
+        }
+      }
+      return false;
     });
     for (let i = 0; i + 1 < mios.length; i++) if (cand.set.has(mios[i] + mios[i + 1])) cub[i] = cub[i + 1] = true;
     let tot = 0, ok = 0;
@@ -230,17 +235,26 @@
     if (a.base && a.base === b.base) return { nivel: (a.extras.length && b.extras.length) ? 'extras' : 'base', sim: 1 };
     const s = Math.max(parecido(a.full, b.full), a.base && b.base ? parecido(a.base, b.base) : 0);
     if (s >= 0.82 && Math.min(a.full.length, b.full.length) >= 4) return { nivel: 'fuzzy', sim: s };
+    // Un título es el principio o el final del otro («Calma» y «Calma, tómatelo con calma»).
+    const ta = toks(a.base), tb = toks(b.base);
+    const corto = ta.length <= tb.length ? ta : tb, largo = ta.length <= tb.length ? tb : ta;
+    const c = corto.join(' ');
+    if (c.length >= 3 && corto.length < largo.length &&
+        (largo.slice(0, corto.length).join(' ') === c || largo.slice(-corto.length).join(' ') === c)) {
+      return { nivel: 'contiene', sim: Math.max(s, c.length / largo.join(' ').length) };
+    }
     return { nivel: 'no', sim: s };
   }
 
   function evalArtista(rb, sp) {
     if (!rb.art.length) return { nivel: 'sin', cov: 0, prim: 0 };
     const cand = conj(sp.art.concat(toks(sp.tit.ver.who), toks(sp.tit.feats)));
-    const cov = cobertura(rb.art, cand);
+    const letras = [];
+    const cov = cobertura(rb.art, cand, letras);
     const mio = conj(rb.art.concat(toks(rb.tit.ver.who), toks(rb.tit.feats)));
     const prim = cobertura(sp.prim, mio);
-    if (cov >= 0.85 || (prim >= 0.85 && cov >= 0.5)) return { nivel: 'fuerte', cov, prim };
-    if (cov >= 0.34 || prim >= 0.85) return { nivel: 'parcial', cov, prim };
+    if (cov >= 0.85 || (prim >= 0.85 && cov >= 0.5)) return { nivel: 'fuerte', cov, prim, letras };
+    if (cov >= 0.5 || prim >= 0.85) return { nivel: 'parcial', cov, prim };
     if (rb.tit.pista && cobertura(sp.prim, conj(toks(rb.tit.pista))) >= 0.85) return { nivel: 'pista', cov, prim };
     return { nivel: 'no', cov, prim };
   }
@@ -269,8 +283,9 @@
   }
 
   const NOM_LARGO = { ext: 'Extended', orig: 'Original', radio: 'Radio Edit' };
-  function notaDe(rb, sp, dd) {
+  function notaDe(rb, sp, dd, A) {
     const p = [];
+    if (A && A.letras && A.letras.length) p.push('Artista con una letra distinta (' + A.letras.map(x => x[0] + ' / ' + x[1]).join(', ') + ')');
     const la = rb.tit.ver.largo, lb = sp.tit.ver.largo;
     if (la === 'ext' && lb !== 'ext') { if (dd > 10) p.push('Sin Extended en Spotify: se usa la ' + (lb === 'radio' ? 'Radio Edit' : 'Original')); }
     else if (la && lb && la !== lb) p.push('En Spotify es la ' + NOM_LARGO[lb]);
@@ -282,6 +297,7 @@
   function motivosDe(rb, sp, T, A, V) {
     const m = [];
     if (T.nivel === 'fuzzy') m.push('el título no es idéntico');
+    if (T.nivel === 'contiene') m.push('un título contiene al otro');
     if (T.nivel === 'extras') m.push('el paréntesis del título es distinto');
     if (A.nivel === 'parcial') m.push('solo coincide parte de los artistas');
     if (A.nivel === 'sin') m.push('en rekordbox no tiene artista');
@@ -303,9 +319,13 @@
     if (A.nivel === 'no') return { clase: 'no', p: 0 };
     const V = evalVersion(rb, sp);
     if (V.descarta) return { clase: 'no', p: 0 };
+    // Sin artista y además sin el remix que se busca: solo coincide el título, no vale ni para preguntar.
+    if (A.nivel === 'sin' && !V.ok) return { clase: 'no', p: 0 };
+    if (T.nivel === 'contiene' && A.nivel !== 'fuerte') return { clase: 'no', p: 0 };
     let p = 100;
     if (T.nivel === 'base') p -= 3;
     else if (T.nivel === 'extras') p -= 15;
+    else if (T.nivel === 'contiene') p -= 25;
     else if (T.nivel === 'fuzzy') p -= 12 + (1 - T.sim) * 80;
     p -= { fuerte: 0, parcial: 22, sin: 28, pista: 34 }[A.nivel];
     if (A.nivel === 'fuerte') p -= (1 - Math.min(1, A.cov)) * 6;
@@ -315,7 +335,7 @@
     const seguro = (T.nivel === 'exact' || T.nivel === 'base') && A.nivel === 'fuerte' && V.ok;
     return {
       clase: seguro ? 'seguro' : 'dudosa', p, dd, titulo: T.nivel, artista: A.nivel, version: V.ok ? 'ok' : V.motivo,
-      nota: seguro ? notaDe(rb, sp, dd) : '', motivos: seguro ? [] : motivosDe(rb, sp, T, A, V),
+      nota: seguro ? notaDe(rb, sp, dd, A) : '', motivos: seguro ? [] : motivosDe(rb, sp, T, A, V),
       otraVersion: seguro && dd > 20,
     };
   }
@@ -338,6 +358,15 @@
     ev.sort((x, y) => ((y.r.clase === 'seguro') - (x.r.clase === 'seguro')) || (y.r.p - x.r.p));
     const seguro = ev.length && ev[0].r.clase === 'seguro' ? ev[0] : null;
     return { seguro, dudosas: seguro ? [] : ev.slice(0, 3) };
+  }
+  // Para el diagnóstico: por qué una candidata no ha valido, y las más parecidas de una lista.
+  function explica(rb, sp) {
+    const T = evalTitulo(rb.tit, sp.tit), A = evalArtista(rb, sp), V = evalVersion(rb, sp);
+    return { titulo: T.nivel, sim: T.sim || 0, artista: A.nivel, cov: A.cov || 0, version: V.ok ? 'ok' : V.motivo };
+  }
+  function cercanas(rb, cands, n) {
+    return cands.map(sp => { const e = explica(rb, sp); return { sp, e, k: e.sim * 2 + e.cov }; })
+      .sort((x, y) => y.k - x.k).slice(0, n || 2);
   }
   // ¿Está ya esta canción (u otra versión de la misma) en una lista de canciones de Spotify?
   function yaEsta(rb, lista) {
@@ -492,7 +521,7 @@
   }
 
   return {
-    MATCHER, norm, parecido, mmss, parseTitulo, descRb, descSp, minSp, claveCancion, puntua, elige, yaEsta,
+    MATCHER, norm, parecido, mmss, parseTitulo, descRb, descSp, minSp, claveCancion, puntua, elige, yaEsta, explica, cercanas,
     consultas, consultaExtended, leeRekordbox, nombreDestino, propMapa, buscaPorNombre, sinRepartir,
   };
 });

@@ -3,7 +3,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.1.0';
+  const VERSION = '0.1.1';
   const C = window.SSCore;
 
   const CFG = {
@@ -75,7 +75,7 @@
     copias: null, ultimaCopia: null,
     tarea: null, parar: false, candado: false,
     avisos: [], errores: [], nueva: null,
-    cont: { spGet: 0, spBloqueadas: 0, sp429: 0, busquedas: 0, deCache: 0, db: 0 },
+    cont: { spGet: 0, spBloqueadas: 0, sp429: 0, busquedas: 0, deCache: 0, db: 0, ext: 0 },
   };
   let nAviso = 0;
 
@@ -623,9 +623,13 @@
       reevalua(u, idx);
       if (u.elegida) break;
     }
-    if (u.elegida && u.rb.tit.ver.largo === 'ext' && u.elegida.sp.tit.ver.largo !== 'ext' && u.elegida.r.dd > 10) {
-      const q = C.consultaExtended(u.rb);
-      if (qs.indexOf(q) < 0) { u.consultas.push(q); (await busca(q)).forEach(mete); reevalua(u, idx); }
+    // Antes de conformarse con una versión corta, se busca la Extended a propósito: cuando el título de
+    // rekordbox lo dice, o cuando la de Spotify dura más de un minuto menos que el archivo.
+    const el = u.elegida, rb = u.rb;
+    if (el && el.sp.tit.ver.largo !== 'ext' && rb.tit.ver.largo !== 'radio' &&
+        ((rb.tit.ver.largo === 'ext' && el.r.dd > 10) || (rb.dur && el.sp.dur && rb.dur - el.sp.dur > 60))) {
+      const q = C.consultaExtended(rb);
+      if (qs.indexOf(q) < 0) { u.consultas.push(q); S.cont.ext++; (await busca(q)).forEach(mete); reevalua(u, idx); }
     }
   }
   async function simula(prog, fresca) {
@@ -771,7 +775,7 @@
     p('Memoria: ' + (S.memLista ? 'cargada' + (S.memRev ? '' : ' (aún sin archivo)') : 'sin cargar'));
     p('Spotify: ' + (S.sp ? 'conectado; permisos: ' + (S.sp.scope || '(no informados)') : 'sin conectar'));
     p('Peticiones a Spotify: ' + S.cont.spGet + ' GET; escrituras enviadas: 0; escrituras bloqueadas por la app: ' + S.cont.spBloqueadas + '; avisos de límite (429): ' + S.cont.sp429);
-    p('Búsquedas: ' + S.cont.busquedas + ' nuevas, ' + S.cont.deCache + ' de caché. Peticiones a Dropbox: ' + S.cont.db);
+    p('Búsquedas: ' + S.cont.busquedas + ' nuevas, ' + S.cont.deCache + ' de caché; de ellas, ' + S.cont.ext + ' buscando la Extended. Peticiones a Dropbox: ' + S.cont.db);
     if (S.xml) {
       const X = S.xml.datos;
       p('XML: ' + S.xml.ruta + ' (' + kb(S.xml.tam) + '), exportado ' + fechaHora(S.xml.fecha) + ', ' + X.producto);
@@ -793,21 +797,23 @@
       p('Simulación ' + fechaHora(S.sim.fecha) + (S.sim.incompleta ? ' [INCOMPLETA ' + S.sim.hechas + '/' + S.sim.unicas.length + ']' : '') + ': únicas ' + S.sim.unicas.length + '; ya están ' + c.ya + '; se añadirían ' + c.add + '; dudosas ' + c.duda + '; no están ' + c.no);
       porPlaylist(S.sim).forEach(f => p('  ' + f.pl.clave + ': ya ' + f.ya + ', añadir ' + f.add + ', dudosas ' + f.duda + ', no están ' + f.no));
       const de = e => S.sim.unicas.filter(u => u.estado === e);
-      p('Dudosas (máx. 50):');
-      de('duda').slice(0, 50).forEach(u => {
+      p('Dudosas (' + de('duda').length + '):');
+      de('duda').slice(0, 80).forEach(u => {
         p('  RB ' + lineaRb(u.rb) + ' [' + C.mmss(u.rb.dur) + ']');
         u.dudosas.forEach(d => p('     ? ' + lineaSp(d.sp.m) + ' [' + C.mmss(d.sp.dur) + '] p=' + Math.round(d.r.p) + ' t=' + d.r.titulo + ' a=' + d.r.artista + ' v=' + d.r.version));
       });
-      p('No están (máx. 70):');
-      de('no').slice(0, 70).forEach(u => p('  RB ' + lineaRb(u.rb) + ' [' + C.mmss(u.rb.dur) + '] q=' + JSON.stringify(u.consultas || []) + ' cand=' + (u.cands ? u.cands.size : 0) + (u.decidida ? ' [con respuesta tuya]' : '')));
-      p('Se añadirían con nota (máx. 40):');
-      de('add').filter(u => u.elegida.r.nota).slice(0, 40).forEach(u => p('  RB ' + lineaRb(u.rb) + ' [' + C.mmss(u.rb.dur) + '] -> ' + lineaSp(u.elegida.sp.m) + ' [' + C.mmss(u.elegida.sp.dur) + '] ' + u.elegida.r.nota));
-      p('Muestra de seguras (25):');
-      const seg = S.sim.unicas.filter(u => u.estado === 'add' || u.estado === 'ya');
-      const paso = Math.max(1, Math.floor(seg.length / 25));
-      seg.filter((u, i) => i % paso === 0).slice(0, 25).forEach(u => {
-        const sp = u.elegida ? u.elegida.sp : (u.destinos.find(d => d.ya) || {}).ya.sp;
-        p('  ' + u.estado + ' RB ' + lineaRb(u.rb) + ' [' + C.mmss(u.rb.dur) + '] = ' + lineaSp(sp.m) + ' [' + C.mmss(sp.dur) + ']');
+      p('No están (' + de('no').length + '); con ~ lo más parecido que devolvió Spotify:');
+      de('no').slice(0, 120).forEach(u => {
+        p('  RB ' + lineaRb(u.rb) + ' [' + C.mmss(u.rb.dur) + '] q=' + JSON.stringify(u.consultas || []) + ' cand=' + (u.cands ? u.cands.size : 0) + (u.decidida ? ' [con respuesta tuya]' : ''));
+        C.cercanas(u.rb, u.cands ? Array.from(u.cands.values()) : [], 2).forEach(c =>
+          p('     ~ ' + lineaSp(c.sp.m) + ' [' + C.mmss(c.sp.dur) + '] t=' + c.e.titulo + ' a=' + c.e.artista + ' v=' + c.e.version));
+      });
+      p('Se añadirían (' + de('add').length + '):');
+      de('add').forEach(u => p('  ' + lineaRb(u.rb) + ' [' + C.mmss(u.rb.dur) + '] -> ' + lineaSp(u.elegida.sp.m) + ' [' + C.mmss(u.elegida.sp.dur) + ']' + (u.elegida.r.nota ? ' | ' + u.elegida.r.nota : '')));
+      p('Ya están (' + de('ya').length + '):');
+      de('ya').forEach(u => {
+        const y = u.destinos.find(d => d.ya).ya;
+        p('  ' + lineaRb(u.rb) + ' [' + C.mmss(u.rb.dur) + '] = ' + lineaSp(y.sp.m) + ' [' + C.mmss(y.sp.dur) + ']' + (y.r.otraVersion ? ' | otra versión' : ''));
       });
     } else p('Simulación: sin hacer');
     if (S.c) p('Sin repartir: ' + S.c.filas.length + ' (ocultas ' + S.c.filas.filter(f => oculta(f.uri)).length + '); likes desde ' + S.c.desde + '; cuentan como repartidas: ' + S.c.rep.length + ' playlists');

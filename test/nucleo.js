@@ -58,7 +58,14 @@ es(P(D.R.cumbia, D.cat.cumbia).clase === 'dudosa', 'sin artista es dudosa');
 es(P(D.R.sunrise, D.cat.sunriseOtro).clase === 'no', 'mismo título de otro artista no vale');
 es(P(D.R.current, D.cat.currentInst).clase === 'dudosa', 'instrumental en vez de original es dudosa');
 es(P(D.R.extra, D.cat.xtra).clase === 'dudosa' && P(D.R.extra, D.cat.extra).clase === 'seguro', 'títulos casi iguales no se confunden');
-es(P(D.R.wait, D.cat.wait).clase === 'seguro', 'una letra cambiada en el artista');
+es(P(D.R.wait, D.cat.wait).clase === 'seguro' && /Artista con una letra distinta \(martan \/ marten\)/.test(P(D.R.wait, D.cat.wait).nota), 'una letra cambiada en el artista: segura y con nota');
+es(!/letra distinta/.test(P(D.R.glass, D.cat.glass).nota), 'sin letra cambiada no hay nota');
+es(P(D.R.besos, D.cat.besosOtro).clase === 'no', 'sin artista y sin el remix buscado: ni se pregunta');
+es(P(D.R.alto, D.cat.altoOtro).clase === 'no', 'un artista que solo se parece en una palabra no vale ni como dudosa');
+es(P(D.R.calma, D.cat.calmaLarga).clase === 'dudosa' && /contiene/.test(P(D.R.calma, D.cat.calmaLarga).motivos.join()), 'un título que contiene al otro es dudosa');
+es(P({ name: 'Calma', artist: 'Otra Persona', dur: 360 }, D.cat.calmaLarga).clase === 'no', 'título contenido de otro artista no vale');
+es(P({ name: 'U', artist: 'Mila Ros', dur: 200 }, { id: 'x', name: 'U Got It', artists: [{ name: 'Mila Ros' }], duration_ms: 200000 }).clase === 'no', 'un título de una letra no cuenta como contenido');
+es(P({ name: 'Calma, Tómatelo Con Calma', artist: 'Mila Ros', dur: 220 }, { id: 'x', name: 'Calma', artists: [{ name: 'Mila Ros' }], duration_ms: 200000 }).clase === 'dudosa', 'título contenido, en el otro sentido');
 es(P(D.R.moveOn, D.cat.moveOn).clase === 'seguro', 'país entre paréntesis en el artista');
 es(P(D.R.tondo, D.cat.tondo).clase === 'seguro', 'espacios dobles y &');
 es(P(D.R.ladrillo, D.cat.ladrillo).clase === 'seguro', 'caracteres no latinos');
@@ -87,6 +94,11 @@ for (const k of D.esperado.no) {
   const e = elegida(k);
   es(!e.seguro && !e.dudosas.length, 'no encuentra nada para ' + k);
 }
+// lo más parecido a una que no está (para el diagnóstico)
+let cer = C.cercanas(rb(D.R.besos), todo, 2);
+es(cer.length === 2 && cer[0].sp.id === D.cat.besosOtro.id && cer[0].e.titulo === 'exact' && cer[0].e.artista === 'sin', 'cercanas dice qué es lo más parecido y por qué no valió');
+// con la Extended a la vista, se elige la Extended aunque rekordbox no lo diga
+es(C.elige(rb(D.R.larga), [sp(D.cat.largaCorta)], {}).seguro.sp.id === D.cat.largaCorta.id, 'sin la Extended se queda con la corta');
 // «No es» descarta esa candidata
 let e = C.elige(rb(D.R.errata), todo, { rechazadas: new Set([D.cat.conErrata.uri]) });
 es(!e.seguro && !e.dudosas.length, 'una candidata rechazada no vuelve a salir');

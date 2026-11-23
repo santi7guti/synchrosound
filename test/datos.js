@@ -41,6 +41,12 @@ const cat = {
   currentInst: pista('Deep Current - Instrumental', ['Mira Sol'], 300),
   sunriseOtro: pista('Sunrise', ['Otra Gente'], 250),
   lady: pista('Dama (Óyeme Esta Noche)', ['Modelo Uno'], 221),
+  largaCorta: pista('Sube Sube', ['Rita Polo'], 185),
+  // la Extended solo sale si se busca a propósito con la palabra «extended»
+  largaExt: pista('Sube Sube - Extended Mix', ['Rita Polo'], 372, { soloConExtended: true }),
+  calmaLarga: pista('Calma, Tómatelo Con Calma', ['Mila Ros'], 220),
+  besosOtro: pista('B.E.S.O.S', ['Banda Equis'], 315),
+  altoOtro: pista('Alto', ['Brown Cult'], 177),
   // sueltas para likes y Soundeo
   like1: pista('Solo Me Gusta', ['Iris Mar'], 200),
   likeViejo: pista('Like Antiguo', ['Iris Mar'], 210),
@@ -84,6 +90,10 @@ const R = {
   moveOn: rb('Sigue Recto (Extended Mix)', 'Vigías (UK)', 298, { kind: 'AIFF File' }),
   current: rb('Deep Current', 'Mira Sol', 300),
   sunrise: rb('Sunrise', 'Otto Blau', 250),
+  larga: rb('Sube Sube', 'Rita Polo', 370),
+  calma: rb('Calma', 'Mila Ros', 360),
+  besos: rb('Besos (Nolo Remix)', '', 289),
+  alto: rb('ALTO', 'Browen, DJ Libre', 243),
   nube: rb('Algo de SoundCloud', 'Nube', 300, { kind: 'Unknown Format', loc: 'file://localhost/soundcloud:tracks:123456' }),
   sample: rb('Sirena', '', 4, { kind: 'WAV File', loc: 'file://localhost/C:/Users/x/rekordbox/Sampler/OSC_SAMPLER/Sirena.wav' }),
   vieja: rb('Canción Vieja', 'Alguien', 300),
@@ -91,7 +101,7 @@ const R = {
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const arbol = {
   ns: {
-    'House': ['glass', 'paper', 'cobalt', 'errata', 'cumbia', 'perdon', 'extra', 'xtra', 'baila', 'wait', 'nube'],
+    'House': ['glass', 'paper', 'cobalt', 'errata', 'cumbia', 'perdon', 'extra', 'xtra', 'baila', 'wait', 'nube', 'larga', 'calma', 'besos', 'alto'],
     'Techno': ['bus', 'velvet', 'openWater', 'tool', 'ladrillo', 'moveOn', 'current', 'sunrise'],
     'Raw/UK Garage': ['velvet'],
     'Chill': ['glass'],
@@ -148,11 +158,11 @@ const likes = [
 
 // Qué tiene que salir de la simulación.
 const esperado = {
-  unicas: 21,
+  unicas: 25,
   ya: ['glass', 'tondo', 'silence'],
-  add: { paper: 'paper', cobalt: 'cobaltExt', bus: 'busExt', velvet: 'velvetRmx', signal: 'signal', ladrillo: 'ladrillo', extra: 'extra', xtra: 'xtra', baila: 'bailaExt', wait: 'wait', moveOn: 'moveOn' },
-  duda: { openWater: 'openWater', errata: 'conErrata', cumbia: 'cumbia', perdon: 'perdon', current: 'currentInst' },
-  no: ['tool', 'sunrise'],
+  add: { paper: 'paper', cobalt: 'cobaltExt', bus: 'busExt', velvet: 'velvetRmx', signal: 'signal', ladrillo: 'ladrillo', extra: 'extra', xtra: 'xtra', baila: 'bailaExt', wait: 'wait', moveOn: 'moveOn', larga: 'largaExt' },
+  duda: { openWater: 'openWater', errata: 'conErrata', cumbia: 'cumbia', perdon: 'perdon', current: 'currentInst', calma: 'calmaLarga' },
+  no: ['tool', 'sunrise', 'besos', 'alto'],
   sinRepartir: ['like1', 's2', 's1'],
 };
 

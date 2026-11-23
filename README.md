@@ -3,7 +3,7 @@
 Web estática (GitHub Pages, sin servidor) para llevar a Spotify lo que hay en rekordbox.
 Se abre en <https://santi7guti.github.io/synchrosound/> desde el PC o el iPhone.
 
-**Estado: fase 1, solo lectura (v0.1.0).** Esta versión lee y enseña; no cambia nada en Spotify.
+**Estado: fase 1, solo lectura (v0.1.1).** Esta versión lee y enseña; no cambia nada en Spotify.
 
 ## Qué hace esta versión
 

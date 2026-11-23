@@ -127,7 +127,7 @@ class Mundo {
         if (this.opc.esperaLarga && this.busquedas >= this.opc.esperaLarga) return json({ error: { status: 429, message: 'API rate limit exceeded' } }, 429, { 'retry-after': '3600' });
         if (this.opc.limite429 > 0) { this.opc.limite429--; return json({ error: { status: 429, message: 'API rate limit exceeded' } }, 429, { 'retry-after': '1' }); }
         const qt = C.norm(u.searchParams.get('q') || '').split(' ').filter(Boolean);
-        const res = D.catalogo.map(t => {
+        const res = D.catalogo.filter(t => !t.soloConExtended || qt.indexOf('extended') >= 0).map(t => {
           const texto = ' ' + C.norm(t.name + ' ' + t.artists.map(a => a.name).join(' ')) + ' ';
           return { t, f: qt.filter(x => texto.indexOf(' ' + x + ' ') >= 0).length / (qt.length || 1) };
         }).filter(x => x.f >= 0.6).sort((a, b) => b.f - a.f).slice(0, 10).map(x => x.t);

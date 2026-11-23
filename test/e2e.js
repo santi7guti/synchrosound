@@ -57,7 +57,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
 
   // --- arranque ---
   let t = await cuerpo(page);
-  es(/v0\.1\.0/.test(t), 'se ve el número de versión');
+  es(/v0\.1\.1/.test(t), 'se ve el número de versión');
   es(/Solo lectura/.test(t), 'se ve el indicador de solo lectura');
   es(/Sin conectar en este dispositivo/.test(t), 'empieza sin conectar');
   await foto(page, 'cuentas-vacio' + sufijo);
@@ -81,7 +81,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   await eligeXml(page);
   t = await cuerpo(page);
   es(/Notas\.txt/.test(t) === false, 'la lista de XML no enseña archivos que no lo son');
-  es(/24 entradas/.test(t) && /4 playlists New School y 2 Old Gems/.test(t), 'lee la colección y las playlists del mapa');
+  es(/28 entradas/.test(t) && /4 playlists New School y 2 Old Gems/.test(t), 'lee la colección y las playlists del mapa');
   es(/Ignoradas: 1 de SoundCloud y 1 sample\./.test(t), 'ignora SoundCloud y samples');
   await foto(page, 'cuentas' + sufijo);
 
@@ -123,6 +123,9 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   for (const k of E.ya) es(de(k).e === 'ya', 'ya está ' + k);
   es(!est.find(x => x.n === 'Algo de SoundCloud') && !est.find(x => x.n === 'Canción Vieja'), 'no entra lo de SoundCloud ni lo de fuera de New School');
   es(/Sin Extended en Spotify: se usa la Original/.test(de('paper').nota), 'anota cuando no hay Extended');
+  es(de('larga').sp === D.cat.largaExt.id, 'si la de Spotify sale más de un minuto más corta, busca la Extended a propósito y se queda con ella');
+  es(/Artista con una letra distinta \(martan \/ marten\)/.test(de('wait').nota), 'una letra distinta en el artista: segura, con nota');
+  es((await page.evaluate(() => window.SS.estado.cont.ext)) >= 2, 'búsquedas de Extended hechas');
   es(mundo.busquedas > busAntes && mundo.busquedas - busAntes < 70, 'búsquedas hechas: ' + (mundo.busquedas - busAntes));
   es(mundo.peticiones.filter(p => p.host === 'api.spotify.com' && p.ruta === '/v1/search').length >= 1, 'el aviso de límite (429) se respeta y se reintenta');
   t = await cuerpo(page);
@@ -150,7 +153,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   await page.locator('.fila.cat-duda', { hasText: 'Midnigth Train' }).getByRole('button', { name: 'Añadir', exact: true }).click();
   await page.locator('.fila.cat-duda', { hasText: 'Open Water' }).getByRole('button', { name: 'No es', exact: true }).click();
   n = await numeros(page);
-  es(n.add === 12 && n.duda === 3 && n.no === 3 && n.ya === 3, 'tras responder dos dudosas: ' + JSON.stringify(n));
+  es(n.add === 13 && n.duda === 4 && n.no === 5 && n.ya === 3, 'tras responder dos dudosas: ' + JSON.stringify(n));
   await page.waitForFunction(() => true, null, { timeout: 1 }).catch(() => {});
   await page.waitForTimeout(2500); // la memoria se guarda sola al cabo de un momento
   const mem = JSON.parse(mundo.archivos.get('/memoria/memoria.json').texto);
@@ -171,13 +174,13 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   const bus2 = mundo.busquedas;
   await simula(page);
   n = await numeros(page);
-  es(n.add === 12 && n.duda === 3 && n.no === 3 && n.ya === 3, 'tras recargar, las respuestas siguen: ' + JSON.stringify(n));
+  es(n.add === 13 && n.duda === 4 && n.no === 5 && n.ya === 3, 'tras recargar, las respuestas siguen: ' + JSON.stringify(n));
   es(mundo.busquedas === bus2, 'la segunda simulación no repite búsquedas (caché): ' + (mundo.busquedas - bus2));
   await page.locator('.filtro.cat-add').click();
   es(/Confirmada por ti/.test(await page.locator('.fila.cat-add', { hasText: 'Midnigth Train' }).innerText()), 'la confirmada por ti se distingue');
   await page.locator('.fila.cat-add', { hasText: 'Midnigth Train' }).getByRole('button', { name: 'Deshacer mi respuesta', exact: true }).click();
   n = await numeros(page);
-  es(n.add === 11 && n.duda === 4, 'se puede deshacer una respuesta: ' + JSON.stringify(n));
+  es(n.add === 12 && n.duda === 5, 'se puede deshacer una respuesta: ' + JSON.stringify(n));
 
   // --- cambiar el mapa a mano ---
   await page.locator('select[aria-label="Playlist de Spotify para Chill"]').selectOption({ label: 'VARIOS - Otra' });
@@ -187,7 +190,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   await page.waitForFunction(() => /1 playlist de rekordbox sin pareja/.test(document.body.innerText));
   await simula(page);
   n = await numeros(page);
-  es(n.add === 11 && n.duda === 4 && n.no === 3 && n.ya === 3 && mundo.busquedas === bus2, 'tras tocar el mapa se simula de nuevo sin búsquedas nuevas: ' + JSON.stringify(n));
+  es(n.add === 12 && n.duda === 5 && n.no === 5 && n.ya === 3 && mundo.busquedas === bus2, 'tras tocar el mapa se simula de nuevo sin búsquedas nuevas: ' + JSON.stringify(n));
 
   // --- botón C ---
   await pestana(page, 'Sin repartir');
@@ -220,13 +223,16 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   // --- diagnóstico ---
   await pestana(page, 'Diagnóstico');
   const diag = await page.locator('#diag').inputValue();
-  es(/SynchroSound 0\.1\.0/.test(diag) && /escrituras enviadas: 0/.test(diag) && /Simulación/.test(diag) && /Dudosas/.test(diag), 'el diagnóstico lleva versión, recuentos y dudosas');
+  es(/SynchroSound 0\.1\.1/.test(diag) && /buscador v2/.test(diag) && /escrituras enviadas: 0/.test(diag) && /Simulación/.test(diag) && /Dudosas \(5\)/.test(diag), 'el diagnóstico lleva versión, recuentos y dudosas');
+  es(/Se añadirían \(12\):/.test(diag) && Object.keys(E.add).every(k => diag.indexOf(D.R[k].name) >= 0), 'el diagnóstico lista todas las que se añadirían');
+  es(/Ya están \(3\):/.test(diag) && /Radio Silence.*otra versión/.test(diag), 'el diagnóstico lista las que ya están');
+  es(/No están \(5\)/.test(diag) && /~ Banda Equis — B\.E\.S\.O\.S \[5:15\] t=exact a=sin v=falta-remix/.test(diag), 'el diagnóstico enseña lo más parecido a las que no están y por qué no valió');
   const secretos = await page.evaluate(() => [window.SS.estado.sp.a, window.SS.estado.sp.r, window.SS.estado.db.a, window.SS.estado.db.r]);
   es(secretos.every(s => s && diag.indexOf(s) < 0) && !/refresco-secreto|acceso-\d/.test(diag), 'el diagnóstico no lleva tokens');
   es(diag.indexOf('usuario_prueba') < 0 && diag.indexOf('ejemplo.test') < 0, 'el diagnóstico no lleva el usuario ni el correo');
   await boton(page, 'Copiar').click();
   const porta = await page.evaluate(() => navigator.clipboard.readText()).catch(() => null);
-  if (porta !== null) es(porta.indexOf('SynchroSound 0.1.0') === 0, 'el botón Copiar copia el diagnóstico');
+  if (porta !== null) es(porta.indexOf('SynchroSound 0.1.1') === 0, 'el botón Copiar copia el diagnóstico');
   await foto(page, 'diagnostico' + sufijo);
 
   // --- el candado ---
