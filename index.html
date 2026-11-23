@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- La página solo puede hablar con Spotify, Dropbox y su propio sitio. Lo impone el navegador. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://api.spotify.com https://accounts.spotify.com https://api.dropboxapi.com https://content.dropboxapi.com; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="light dark">
+<title>SynchroSound</title>
+<link rel="stylesheet" href="styles.css?v=0.1.0">
+</head>
+<body>
+<div id="app"><p class="cargando">Cargando SynchroSound…</p></div>
+<noscript><p class="cargando">SynchroSound necesita JavaScript.</p></noscript>
+<script src="core.js?v=0.1.0"></script>
+<script src="app.js?v=0.1.0"></script>
+</body>
+</html>

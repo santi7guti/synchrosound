@@ -1,0 +1,159 @@
+/* Datos INVENTADOS para las pruebas. Nada de esto sale de la biblioteca de nadie:
+   artistas, títulos y playlists de mentira con las mismas formas que dan guerra en la vida real. */
+'use strict';
+
+let nId = 0;
+function pista(nombre, artistas, seg, extra) {
+  nId++;
+  const id = 'sp' + String(nId).padStart(20, '0');
+  return Object.assign({
+    id, uri: 'spotify:track:' + id, type: 'track', name: nombre, duration_ms: seg * 1000,
+    artists: artistas.map((n, i) => ({ id: 'ar' + nId + '_' + i, name: n })),
+    album: { name: 'Disco ' + nId }, external_ids: { isrc: 'XX' + String(nId).padStart(10, '0') },
+  }, extra || {});
+}
+
+// ---- catálogo de Spotify de mentira ----
+const cat = {
+  glass: pista('Glass Harbor', ['Nora Vex'], 372),
+  paper: pista('Paper Lanterns', ['Nora Vex'], 215),
+  cobaltExt: pista('Cobalt Avenue - Extended Mix', ['Tom Río', 'Søren Falk'], 400),
+  cobaltRadio: pista('Cobalt Avenue - Radio Edit', ['Tom Río', 'Søren Falk'], 190),
+  busCorta: pista('Night Bus', ['Kilo', 'Lima'], 201),
+  busExt: pista('Night Bus - Extended Mix', ['Kilo', 'Lima'], 389),
+  velvetRmx: pista('Velvet Engine - Dario Kent Remix', ['Mira Sol', 'Dario Kent'], 366),
+  velvetOtro: pista('Velvet Engine - Uma Reed Remix', ['Mira Sol', 'Uma Reed'], 365),
+  openWater: pista('Open Water', ['Mira Sol'], 338),
+  conErrata: pista('Midnight Train', ['Harlan Pike'], 301),
+  cumbia: pista('Cumbia del Túnel', ['Los Faros'], 281),
+  signal: pista('Need Your Signal', ['Ada Quill', 'Ben Orr', 'Cy Tan'], 418),
+  perdon: pista('Perdón', ['Marisol'], 240),
+  ladrillo: pista('Ladrillo!', ['K雨L'], 322),
+  tondo: pista('Faro Azul', ['Ivo Ren', 'Ana Paz'], 329),
+  tondoOtra: pista('Faro Azul', ['Ivo Ren', 'Ana Paz'], 329), // la misma canción en otro disco (otro id)
+  extra: pista('Mill Life Extra', ['The Mill'], 360),
+  xtra: pista('Mill Life Xtra', ['The Mill'], 338),
+  bailaCorta: pista('Baila (feat. Teo Lang) - Zeta Remix', ['Inés Coral', 'Teo Lang', 'Zeta'], 222),
+  bailaExt: pista('Baila (feat. Teo Lang) - Zeta Extended Remix', ['Inés Coral', 'Teo Lang', 'Zeta'], 341),
+  wait: pista("No Puedo Esperar", ['Leo Marten', 'Polar Unit'], 284),
+  silenceRadio: pista('Radio Silence - Radio Edit', ['Lena Fox'], 200),
+  moveOn: pista('Sigue Recto - Extended Mix', ['Vigías'], 298),
+  currentInst: pista('Deep Current - Instrumental', ['Mira Sol'], 300),
+  sunriseOtro: pista('Sunrise', ['Otra Gente'], 250),
+  lady: pista('Dama (Óyeme Esta Noche)', ['Modelo Uno'], 221),
+  // sueltas para likes y Soundeo
+  like1: pista('Solo Me Gusta', ['Iris Mar'], 200),
+  likeViejo: pista('Like Antiguo', ['Iris Mar'], 210),
+  s1: pista('Favorita Bajada', ['Soundero'], 300),
+  s2: pista('Favorita Por Probar', ['Soundero'], 301),
+  s3: pista('Favorita Ya Repartida', ['Soundero'], 302),
+};
+const relleno = [];
+for (let i = 1; i <= 190; i++) relleno.push(pista('Relleno ' + i, ['Artista Relleno ' + (i % 7)], 180 + i));
+const catalogo = Object.values(cat).concat(relleno);
+
+// ---- XML de rekordbox de mentira ----
+let nRb = 1000;
+const rbPistas = [];
+function rb(nombre, artista, seg, extra) {
+  nRb++;
+  const t = Object.assign({ id: String(nRb), name: nombre, artist: artista, dur: seg, kind: 'MP3 File', remixer: '',
+    loc: 'file://localhost/C:/Musica/Biblioteca/2026/26.10/' + encodeURIComponent((artista || 'x') + ' - ' + nombre) + '.mp3' }, extra || {});
+  rbPistas.push(t);
+  return t;
+}
+const R = {
+  glass: rb('Glass Harbor', 'Nora Vex', 372),
+  paper: rb('Paper Lanterns (Extended Mix)', 'Nora Vex', 395),
+  cobalt: rb('Cobalt Avenue (Extended Mix)', 'Tom Río & Søren Falk', 402),
+  bus: rb('Night Bus', 'Kilo X Lima ', 388),
+  velvet: rb('Velvet Engine (Dario Kent Remix)', 'Mira Sol', 365),
+  openWater: rb('Open Water (Juno Park Remix)', 'Mira Sol', 340),
+  errata: rb('Midnigth Train', 'Harlan Pike', 300),
+  tool: rb('Robot Lento (DJ Nadie TOOL)', 'DJ Nadie', 245),
+  cumbia: rb('Cumbia del Túnel', '', 280),
+  signal: rb('Need Your Signal (OJO BPM)', 'Ada Quill, Ben Orr, Cy Tan', 420),
+  perdon: rb('Perdón | Marisol', 'KLAUS9', 283),
+  ladrillo: rb('Ladrillo! (Edit)', 'K雨L', 321),
+  tondo: rb('Faro Azul', 'Ivo Ren  & Ana Paz ', 329),
+  extra: rb('Mill Life Extra', 'The Mill', 360),
+  xtra: rb('Mill Life Xtra', 'The Mill', 338),
+  baila: rb('Baila (Zeta Extended Remix) (feat. Teo Lang)', 'Inés Coral', 340),
+  wait: rb("No Puedo Esperar (Original Mix)", 'LEO MARTAN, Polar Unit', 284),
+  silence: rb('Radio Silence (Extended Mix)', 'Lena Fox', 400),
+  moveOn: rb('Sigue Recto (Extended Mix)', 'Vigías (UK)', 298, { kind: 'AIFF File' }),
+  current: rb('Deep Current', 'Mira Sol', 300),
+  sunrise: rb('Sunrise', 'Otto Blau', 250),
+  nube: rb('Algo de SoundCloud', 'Nube', 300, { kind: 'Unknown Format', loc: 'file://localhost/soundcloud:tracks:123456' }),
+  sample: rb('Sirena', '', 4, { kind: 'WAV File', loc: 'file://localhost/C:/Users/x/rekordbox/Sampler/OSC_SAMPLER/Sirena.wav' }),
+  vieja: rb('Canción Vieja', 'Alguien', 300),
+};
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const arbol = {
+  ns: {
+    'House': ['glass', 'paper', 'cobalt', 'errata', 'cumbia', 'perdon', 'extra', 'xtra', 'baila', 'wait', 'nube'],
+    'Techno': ['bus', 'velvet', 'openWater', 'tool', 'ladrillo', 'moveOn', 'current', 'sunrise'],
+    'Raw/UK Garage': ['velvet'],
+    'Chill': ['glass'],
+  },
+  og: { 'ALL': ['cobalt', 'signal', 'tondo', 'silence'], 'Classics': ['signal'] },
+};
+function xml() {
+  const pl = (nombre, claves) => '      <NODE Name="' + esc(nombre) + '" Type="1" KeyType="0" Entries="' + claves.length + '">\r\n' +
+    claves.map(k => '        <TRACK Key="' + R[k].id + '"/>\r\n').join('') + '      </NODE>\r\n';
+  return '<?xml version="1.0" encoding="UTF-8"?>\r\n\r\n<DJ_PLAYLISTS Version="1.0.0">\r\n' +
+    '  <PRODUCT Name="rekordbox" Version="7.2.19" Company="AlphaTheta"/>\r\n' +
+    '  <COLLECTION Entries="' + rbPistas.length + '">\r\n' +
+    rbPistas.map(t => '    <TRACK TrackID="' + t.id + '" Name="' + esc(t.name) + '" Artist="' + esc(t.artist) + '" Composer="" Album="" Kind="' + t.kind +
+      '" TotalTime="' + t.dur + '" DateAdded="2026-10-01" Comments="" Location="' + esc(t.loc) + '" Remixer="' + esc(t.remixer) + '" Label="" Mix="">\r\n' +
+      '      <TEMPO Inizio="0.1" Bpm="130.00" Metro="4/4" Battito="1"/>\r\n    </TRACK>\r\n').join('') +
+    '  </COLLECTION>\r\n  <PLAYLISTS>\r\n    <NODE Type="0" Name="ROOT" Count="4">\r\n' +
+    '     <NODE Name="New School (From 01.25)" Type="0" Count="5">\r\n' +
+    Object.keys(arbol.ns).map(n => pl(n, arbol.ns[n])).join('') +
+    '      <NODE Name="Old Gems" Type="0" Count="2">\r\n' + Object.keys(arbol.og).map(n => pl(n, arbol.og[n])).join('') + '      </NODE>\r\n' +
+    '     </NODE>\r\n' +
+    '     <NODE Name="Otra Carpeta" Type="0" Count="1">\r\n' + pl('Viejas', ['vieja', 'glass']) + '     </NODE>\r\n' +
+    pl('SUELTA', ['glass', 'vieja']) + pl('New School Todo (All)', ['glass']) +
+    '    </NODE>\r\n  </PLAYLISTS>\r\n</DJ_PLAYLISTS>\r\n';
+}
+
+// ---- biblioteca de Spotify de mentira ----
+const YO = { id: 'usuario_prueba', display_name: 'Prueba' };
+let nPl = 0;
+function playlist(nombre, pistas, extra) {
+  nPl++;
+  return Object.assign({ id: 'pl' + String(nPl).padStart(20, '0'), name: nombre, owner: YO, collaborative: false, public: false,
+    description: '', snapshot_id: 'snap' + nPl, pistas: pistas.map((t, i) => ({ added_at: '2026-10-' + String(1 + (i % 27)).padStart(2, '0') + 'T10:00:00Z', t })) }, extra || {});
+}
+const playlists = [
+  playlist('NS - House', [cat.glass, cat.s3]),
+  playlist('NS - Techno', []),
+  playlist('NS - Raw / UK Garage', []),
+  playlist('OG - All', [cat.tondo, cat.silenceRadio]),
+  playlist('OG - Classics', []),
+  playlist('Sound All', [cat.s1, cat.s2, cat.s3]),
+  playlist('Sound Down', [cat.s1]),
+  playlist('Sound Try', [cat.s2]),
+  playlist('VARIOS - Larga', relleno.slice(0, 120)),
+  playlist('VARIOS - Otra', [cat.lady, cat.openWater]),
+  playlist('Lista ajena', [cat.paper], { owner: { id: 'otra_persona', display_name: 'Otra' } }),
+];
+const likes = [
+  { added_at: '2026-10-20T09:00:00Z', t: cat.like1 },      // sin repartir
+  { added_at: '2026-10-19T09:00:00Z', t: cat.glass },      // ya está en NS - House
+  { added_at: '2026-08-01T09:00:00Z', t: cat.likeViejo },  // anterior a la fecha
+  { added_at: '2026-10-18T09:00:00Z', t: cat.tondoOtra },  // misma canción que una de OG - All (otro id)
+  { added_at: '2026-10-17T09:00:00Z', t: cat.s2 },         // like y además Sound Try
+].concat(relleno.slice(120, 190).map((t, i) => ({ added_at: '2026-07-' + String(1 + (i % 27)).padStart(2, '0') + 'T08:00:00Z', t })));
+
+// Qué tiene que salir de la simulación.
+const esperado = {
+  unicas: 21,
+  ya: ['glass', 'tondo', 'silence'],
+  add: { paper: 'paper', cobalt: 'cobaltExt', bus: 'busExt', velvet: 'velvetRmx', signal: 'signal', ladrillo: 'ladrillo', extra: 'extra', xtra: 'xtra', baila: 'bailaExt', wait: 'wait', moveOn: 'moveOn' },
+  duda: { openWater: 'openWater', errata: 'conErrata', cumbia: 'cumbia', perdon: 'perdon', current: 'currentInst' },
+  no: ['tool', 'sunrise'],
+  sinRepartir: ['like1', 's2', 's1'],
+};
+
+module.exports = { cat, catalogo, relleno, R, rbPistas, arbol, xml, YO, playlists, likes, esperado };

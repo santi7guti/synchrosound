@@ -1,0 +1,12 @@
+# El repo es público: aquí no entra ningún dato personal.
+# Ni XML de rekordbox, ni copias de Spotify, ni memoria de la app.
+*.xml
+rekordbox*
+copias/
+memoria/
+soundeo/
+real*.json
+*.har
+node_modules/
+test/salida/
+.DS_Store
