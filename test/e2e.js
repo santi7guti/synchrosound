@@ -57,7 +57,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
 
   // --- arranque ---
   let t = await cuerpo(page);
-  es(/v0\.1\.4/.test(t), 'se ve el número de versión');
+  es(/v0\.1\.5/.test(t), 'se ve el número de versión');
   es(/Solo lectura/.test(t), 'se ve el indicador de solo lectura');
   es(/Sin conectar en este dispositivo/.test(t), 'empieza sin conectar');
   await foto(page, 'cuentas-vacio' + sufijo);
@@ -83,6 +83,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   es(/Notas\.txt/.test(t) === false, 'la lista de XML no enseña archivos que no lo son');
   es(/33 entradas/.test(t) && /4 playlists New School y 2 Old Gems/.test(t), 'lee la colección y las playlists del mapa');
   es(/Ignoradas: 1 de SoundCloud y 1 sample\./.test(t), 'ignora SoundCloud y samples');
+  es(/Archivo: \/rekordbox\.xml, último cambio el 23\/11\/2026 14:05 \(comprobado a las \d\d:\d\d\)/.test(t) && /Si cierras rekordbox sin haber cambiado nada, esa fecha no se mueve/.test(t), 'del XML dice cuándo cambió por última vez y cuándo se ha comprobado');
   await foto(page, 'cuentas' + sufijo);
 
   // --- copia ---
@@ -101,11 +102,17 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   es(copia.resumen.avisos.length === 0, 'los totales leídos coinciden con los que dice Spotify');
   es(!/acceso|refresco/.test(copias[0].texto), 'la copia no lleva tokens');
   await page.waitForFunction(() => !window.SS.estado.tarea);
+  es(mundo.archivos.has('/memoria/cache-biblioteca.json') && !/acceso|refresco/.test(mundo.archivos.get('/memoria/cache-biblioteca.json').texto), 'lo leído de Spotify se guarda en Dropbox, sin tokens');
+  es(/playlists releídas 10, sin cambios 0; likes releídos; \d+ peticiones a Spotify/.test(copia.resumen.lectura), 'la primera lectura lo lee todo: ' + copia.resumen.lectura);
   await page.waitForTimeout(1100); // otro segundo: otro nombre
+  const gCopia = mundo.spGets;
   await boton(page, 'Hacer una copia ahora').click();
   await page.waitForFunction(n => window.SS.estado.copias && window.SS.estado.copias.length === n && !window.SS.estado.tarea, 2, { timeout: 60000 });
   copias = Array.from(mundo.archivos.values()).filter(a => a.ruta.startsWith('/copias/'));
   es(copias.length === 2 && copias[0].texto.length > 1000, 'una segunda copia no pisa la primera');
+  const copia2 = JSON.parse(copias[1].texto);
+  es(mundo.spGets - gCopia <= 2 && /playlists releídas 0, sin cambios 10; likes sin cambios; 2 peticiones a Spotify/.test(copia2.resumen.lectura), 'la segunda lectura solo comprueba: ' + (mundo.spGets - gCopia) + ' peticiones (' + copia2.resumen.lectura + ')');
+  es(JSON.stringify(copia2.playlists) === JSON.stringify(copia.playlists) && JSON.stringify(copia2.likes) === JSON.stringify(copia.likes), 'y la copia hecha con lo guardado es idéntica a la leída entera');
   await foto(page, 'copia' + sufijo);
 
   // --- simulación del botón A ---
@@ -130,7 +137,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   es(/Artista con una letra distinta \(martan \/ marten\)/.test(de('wait').nota), 'una letra distinta en el artista: segura, con nota');
   es((await page.evaluate(() => window.SS.estado.cont.ext)) >= 2, 'búsquedas de Extended hechas');
   es(mundo.busquedas > busAntes && mundo.busquedas - busAntes < 70, 'búsquedas hechas: ' + (mundo.busquedas - busAntes));
-  es(mundo.peticiones.filter(p => p.host === 'api.spotify.com' && p.ruta === '/v1/search').length >= 1, 'el aviso de límite (429) se respeta y se reintenta');
+  es(mundo.sp429 === 0, 'en el uso normal Spotify no corta');
   t = await cuerpo(page);
   es(/1 playlist de rekordbox sin pareja en Spotify/.test(t), 'avisa de la playlist sin pareja');
   es(/no se ha cambiado nada en Spotify/.test(t), 'dice que es una simulación');
@@ -216,17 +223,20 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   es(!/acceso|refresco/.test(mundo.archivos.get('/memoria/memoria.json').texto), 'la memoria no lleva tokens');
 
   // --- recargar: todo sigue y no se vuelve a buscar ---
+  const gRecarga = mundo.spGets;
   await page.reload();
   await page.waitForSelector('.cab');
   es(await page.locator('.pestana.activa').innerText() === 'A\nrekordbox a Spotify' || /rekordbox a Spotify/.test(await page.locator('.pestana.activa').innerText()), 'al recargar vuelve a la misma pestaña');
   await pestana(page, 'Cuentas');
   await page.waitForFunction(() => /Archivo: \/rekordbox\.xml/.test(document.body.innerText) && /como Prueba/.test(document.body.innerText), null, { timeout: 15000 });
   es(true, 'al recargar sigue conectado y vuelve a leer el XML solo');
+  es(mundo.spGets === gRecarga, 'al cargar la página no se le pide nada a Spotify');
   const bus2 = mundo.busquedas;
   await simula(page);
   n = await numeros(page);
   es(cuadra(n, 0, -2, 2, 0), 'tras recargar, las respuestas siguen: ' + JSON.stringify(n));
   es(mundo.busquedas === bus2, 'la segunda simulación no repite búsquedas (caché): ' + (mundo.busquedas - bus2));
+  es(mundo.spGets - gRecarga <= 2 && /Spotify leído el [^.]*: playlists releídas 0, sin cambios 10; likes sin cambios; 2 peticiones a Spotify/.test(await cuerpo(page)), 'una simulación tras recargar gasta 2 peticiones a Spotify en vez de releerlo todo (' + (mundo.spGets - gRecarga) + ')');
   est = await estados(page);
   es(est.find(x => x.n === 'Mill Life Extra').e === 'duda' && est.find(x => x.n === 'Mill Life Extra').sp === D.cat.xtra.id, 'la segura rechazada sigue rechazada tras recargar y simular');
   await page.locator('.filtro.cat-duda').click();
@@ -261,6 +271,24 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   n = await numeros(page);
   es(cuadra(n, 0, -2, 2, 0) && mundo.busquedas === bus2, 'tras tocar el mapa se simula de nuevo sin búsquedas nuevas: ' + JSON.stringify(n));
 
+  // --- solo se relee lo que cambia ---
+  const plT = D.playlists.find(p => p.name === 'NS - Techno'), snapT = plT.snapshot_id, itemsAntes = Object.assign({}, mundo.itemsDe);
+  plT.pistas.push({ added_at: '2026-11-22T10:00:00Z', t: D.cat.likeViejo }); plT.snapshot_id = snapT + 'b';
+  D.likes.unshift({ added_at: '2026-11-22T11:00:00Z', t: D.cat.s3 });
+  let g0 = mundo.spGets, lec;
+  try {
+    await simula(page, 'Simular leyendo Spotify de nuevo');
+    lec = await page.evaluate(() => window.SS.estado.lib.lectura);
+    es(lec.releidas === 1 && lec.iguales === 9 && lec.likes === '1 nuevo', 'tras cambiar una playlist y dar un like, solo se relee esa playlist y el like nuevo: ' + JSON.stringify(lec));
+    es(Object.keys(mundo.itemsDe).filter(id => mundo.itemsDe[id] !== (itemsAntes[id] || 0)).join() === plT.id && mundo.spGets - g0 === 3, 'a Spotify solo se le pide la lista, esa playlist y la primera página de likes (' + (mundo.spGets - g0) + ' peticiones)');
+    es((await page.evaluate(() => window.SS.estado.lib.likes.length)) === D.likes.length && (await page.evaluate(id => window.SS.estado.lib.playlists.find(p => p.id === id).items.length, plT.id)) === plT.pistas.length, 'y lo leído queda completo');
+  } finally { plT.pistas.pop(); plT.snapshot_id = snapT; D.likes.shift(); } // los datos de prueba son comunes a los tres flujos
+  await simula(page, 'Simular leyendo Spotify de nuevo');
+  lec = await page.evaluate(() => window.SS.estado.lib.lectura);
+  es(lec.releidas === 1 && lec.likes === 'releídos', 'si desaparece un like se releen los likes enteros: ' + JSON.stringify(lec));
+  n = await numeros(page);
+  es(cuadra(n, 0, -2, 2, 0) && mundo.busquedas === bus2, 'y la simulación vuelve a dar lo mismo, sin búsquedas nuevas: ' + JSON.stringify(n));
+
   // --- botón C ---
   await pestana(page, 'Sin repartir');
   await boton(page, 'Calcular').click();
@@ -288,11 +316,16 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   const mem2 = JSON.parse(mundo.archivos.get('/memoria/memoria.json').texto);
   es(mem2.ocultas[D.cat.like1.uri] && mem2.ocultas[D.cat.like1.uri].o === true, 'lo oculto queda en la memoria');
   es(!mem2.decisiones[clDis].si && mem2.decisiones[clOpen] && mem2.decisiones[clOpen].no.length === 1 && mem2.decisiones[clHumo].nada === false, 'la memoria se actualiza sin perder lo anterior');
+  const usoMem = Object.keys(mem2.uso || {});
+  es(usoMem.length === 1 && /^\d{4}-\d\d-\d\d\|/.test(usoMem[0]) && mem2.uso[usoMem[0]].n > 10 && mem2.uso[usoMem[0]].n <= mundo.spGets, 'las peticiones del día quedan apuntadas en la memoria común (' + (usoMem[0] && mem2.uso[usoMem[0]].n) + ')');
 
   // --- diagnóstico ---
   await pestana(page, 'Diagnóstico');
   const diag = await page.locator('#diag').inputValue();
-  es(/SynchroSound 0\.1\.4/.test(diag) && /buscador v5/.test(diag) && /escrituras enviadas: 0/.test(diag) && /Simulación/.test(diag) && diag.indexOf('Dudosas (' + (nD - 2) + ')') >= 0, 'el diagnóstico lleva versión, recuentos y dudosas');
+  es(/SynchroSound 0\.1\.5/.test(diag) && /buscador v5/.test(diag) && /escrituras enviadas: 0/.test(diag) && /Simulación/.test(diag) && diag.indexOf('Dudosas (' + (nD - 2) + ')') >= 0, 'el diagnóstico lleva versión, recuentos y dudosas');
+  const usoLs = await page.evaluate(() => JSON.parse(localStorage.getItem('ss.uso')).n);
+  es(usoLs === mundo.spGets && diag.indexOf('Peticiones a Spotify hoy: ' + usoLs + ' entre todos tus dispositivos (este: ' + usoLs + ')') >= 0, 'el contador del día coincide con lo que ha recibido Spotify (' + usoLs + ' y ' + mundo.spGets + ')');
+  es(/Último corte de Spotify: ninguno apuntado/.test(diag) && /XML: \/rekordbox\.xml \(\d+ KB\), último cambio 23\/11\/2026 14:05, comprobado \d\d:\d\d/.test(diag), 'el diagnóstico dice si ha habido cortes y de cuándo es el XML');
   es(diag.indexOf('Se añadirían (' + nA + '):') >= 0 && Object.keys(E.add).every(k => diag.indexOf(D.R[k].name) >= 0), 'el diagnóstico lista todas las que se añadirían');
   es(/Se añadirían \(\d+\):\n  con aviso \d+, que van primero[^\n]*\n  r3 Selva Nord — Río Arriba \[3:34\] -> Selva Nord — Río Arriba \[5:01\] \| dura 5:01 en Spotify y 3:34 en rekordbox/.test(diag), 'y las ordena igual que la pantalla, con su nivel de aviso');
   es(/\? Grupo Luna, Hermanos Jota — Veneno - Remix \[6:02\] p=\d+ t=exact a=letra v=sin-nombre/.test(diag), 'el diagnóstico dice por qué una pareja ambigua es dudosa');
@@ -304,13 +337,14 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   es(diag.indexOf('usuario_prueba') < 0 && diag.indexOf('ejemplo.test') < 0, 'el diagnóstico no lleva el usuario ni el correo');
   await boton(page, 'Copiar').click();
   const porta = await page.evaluate(() => navigator.clipboard.readText()).catch(() => null);
-  if (porta !== null) es(porta.indexOf('SynchroSound 0.1.4') === 0, 'el botón Copiar copia el diagnóstico');
+  if (porta !== null) es(porta.indexOf('SynchroSound 0.1.5') === 0, 'el botón Copiar copia el diagnóstico');
   await foto(page, 'diagnostico' + sufijo);
 
   // --- el candado ---
   await page.locator('.candado').click();
   t = await page.locator('.candado-panel').innerText();
   es(/0 escrituras/.test(t) && t.indexOf(LECTURA.split(' ').join(', ')) >= 0, 'el panel de solo lectura enseña permisos y escrituras');
+  es(/Peticiones a Spotify hoy: \d+ entre todos tus dispositivos/.test(t), 'y cuántas peticiones a Spotify se llevan hoy');
 
   // --- la puerta: nada que no sea GET sale hacia Spotify ---
   const antes = mundo.peticiones.length;
@@ -340,6 +374,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   const hosts = Array.from(new Set(mundo.peticiones.map(p => p.host))).sort().join(' ');
   es(hosts === 'accounts.spotify.com api.dropboxapi.com api.spotify.com content.dropboxapi.com santi7guti.github.io www.dropbox.com', 'solo habla con: ' + hosts);
   const permitidos = ['oauth2/token', 'files/list_folder', 'files/download', 'files/upload', 'files/get_metadata', 'users/get_current_account'];
+  es(mundo.sp429 === 0, 'y Spotify no ha cortado en ningún momento');
   es(Array.from(mundo.dbEndpoints).every(e => permitidos.indexOf(e) >= 0 || e === '/oauth2/token'), 'Dropbox: solo listar, bajar y subir; nada de borrar ni mover (' + Array.from(mundo.dbEndpoints).join(', ') + ')');
   es(mundo.archivos.get('/rekordbox.xml').texto === xmlAntes && mundo.archivos.get('/rekordbox.xml').rev === revAntes, 'el XML de rekordbox no se ha tocado');
   es(Array.from(mundo.archivos.keys()).every(k => k === '/rekordbox.xml' || k === '/notas.txt' || k.startsWith('/copias/') || k.startsWith('/memoria/')), 'en Dropbox solo se escribe en copias/ y memoria/');
@@ -374,10 +409,13 @@ async function casos() {
   // token caducado: se renueva solo
   x = await nuevo();
   await conecta(x.page, 'Dropbox'); await conecta(x.page, 'Spotify');
+  await x.page.waitForFunction(() => /como Prueba/.test(document.body.innerText), null, { timeout: 15000 }); // el nombre se pide una vez, al conectar
   await x.page.evaluate(() => { for (const k of ['ss.sp', 'ss.db']) { const t = JSON.parse(localStorage.getItem(k)); t.exp = Date.now() - 1000; localStorage.setItem(k, JSON.stringify(t)); } });
   await x.page.reload();
   await x.page.waitForFunction(() => /como Prueba/.test(document.body.innerText) && /como Cuenta de Prueba/.test(document.body.innerText), null, { timeout: 15000 });
-  es(x.mundo.refrescos.sp === 1 && x.mundo.refrescos.db === 1, 'con el token caducado se renueva sin volver a iniciar sesión');
+  es(x.mundo.refrescos.db === 1 && x.mundo.refrescos.sp === 0, 'al recargar con los tokens caducados se renueva el de Dropbox y a Spotify no se le pide nada');
+  await x.page.evaluate(() => window.SS.spotify('GET', '/me'));
+  es(x.mundo.refrescos.sp === 1, 'y el de Spotify se renueva solo en la primera lectura');
   // token revocado en el servidor (401): también se renueva
   x.mundo.tokens.sp.clear(); x.mundo.tokens.db.clear();
   await eligeXml(x.page);
@@ -415,14 +453,99 @@ async function casos() {
   es(/le falta el permiso «files\.metadata\.read»/.test(await cuerpo(x.page)), 'si falta un permiso de Dropbox dice cuál');
   await x.ctx.close();
 
-  // Spotify pide esperar una hora a media simulación
-  x = await nuevo({ limite429: 0, esperaLarga: 6 });
+  // Spotify corta a media simulación sin decir motivo ni plazo: se para a la primera y no insiste
+  x = await nuevo({ corte: { desde: 24 } });
   await conecta(x.page, 'Dropbox'); await conecta(x.page, 'Spotify'); await eligeXml(x.page);
   await simula(x.page);
-  const t = await cuerpo(x.page);
-  es(/Spotify pide esperar 60 min/.test(t), 'un límite largo de Spotify para la simulación y lo explica');
+  let t = await cuerpo(x.page);
+  es(/Spotify ha cortado las peticiones de la app por haber hecho demasiadas\. No dice cuánto hay que esperar/.test(t), 'un corte de Spotify para la simulación y dice lo que se sabe, sin inventar un plazo');
+  es(x.mundo.sp429 === 1, 'se para al primer 429, sin reintentar (' + x.mundo.sp429 + ')');
   es(/Simulación incompleta/.test(t), 'y lo ya resuelto se enseña como incompleto');
-  es(x.mundo.archivos.has('/memoria/cache-busquedas.json'), 'y lo buscado hasta ahí queda guardado');
+  es(x.mundo.archivos.has('/memoria/cache-busquedas.json') && x.mundo.archivos.has('/memoria/cache-biblioteca.json'), 'y lo buscado y lo leído hasta ahí quedan guardados');
+  let g = x.mundo.spGets;
+  await boton(x.page, 'Simular otra vez').click();
+  await x.page.waitForFunction(() => !window.SS.estado.tarea);
+  es(x.mundo.spGets === g && /No se ha enviado nada a Spotify/.test(await cuerpo(x.page)), 'mientras dura la guarda, volver a pulsar no envía nada a Spotify');
+  es(await x.page.locator('.corte-sp').count() === 1, 'y el corte se ve en pantalla');
+  x.mundo.opc.corte = null; // Spotify vuelve a dejar pasar
+  await boton(x.page, 'Probar ahora (gasta 1 petición)').click();
+  await x.page.waitForFunction(() => /Spotify vuelve a responder/.test(document.body.innerText) && !window.SS.estado.tarea);
+  es(x.mundo.spGets === g + 1 && await x.page.locator('.corte-sp').count() === 0, 'la prueba a mano gasta una sola petición y, si va bien, quita el aviso');
+  await simula(x.page, 'Simular otra vez');
+  es(!(await x.page.evaluate(() => window.SS.estado.sim.incompleta)), 'y la simulación ya termina');
+  await pestana(x.page, 'Diagnóstico');
+  es(/Último corte de Spotify: [^\n]* en \/search; motivo: no lo dice; plazo: no legible; volvió a responder el /.test(await x.page.locator('#diag').inputValue()), 'el diagnóstico guarda cuándo cortó y cuándo volvió');
+  await x.ctx.close();
+
+  // corte mientras lee la biblioteca: lo leído se conserva y no se vuelve a pedir
+  x = await nuevo({ corte: { desde: 6, cuota: true } });
+  await conecta(x.page, 'Dropbox'); await conecta(x.page, 'Spotify'); await eligeXml(x.page);
+  await pestana(x.page, 'rekordbox a Spotify');
+  await boton(x.page, 'Simular').click();
+  await x.page.waitForSelector('.aviso.error');
+  t = await cuerpo(x.page);
+  es(/se ha agotado la cuota del modo desarrollo/.test(t) && /Lo ya leído se conserva/.test(t), 'si es la cuota, lo dice con su nombre');
+  es(x.mundo.sp429 === 1, 'también ahí se para al primer rechazo');
+  const leidas = D.playlists.slice(0, 3).map(p => p.id);
+  es(leidas.every(id => x.mundo.itemsDe[id] === 1), 'antes del corte había leído tres playlists');
+  await pestana(x.page, 'Diagnóstico');
+  es(/motivo: QUOTA_EXCEEDED; plazo: no legible; la app no reintenta antes de /.test(await x.page.locator('#diag').inputValue()), 'y el diagnóstico apunta el motivo que da Spotify');
+  x.mundo.opc.corte = null;
+  await pestana(x.page, 'rekordbox a Spotify');
+  await boton(x.page, 'Probar ahora (gasta 1 petición)').click();
+  await x.page.waitForFunction(() => /Spotify vuelve a responder/.test(document.body.innerText) && !window.SS.estado.tarea);
+  await simula(x.page);
+  es(leidas.every(id => x.mundo.itemsDe[id] === 1) && !(await x.page.evaluate(() => window.SS.estado.sim.incompleta)), 'al seguir, las playlists ya leídas no se vuelven a pedir');
+  await x.ctx.close();
+
+  // si Spotify dice el plazo y el navegador lo puede leer, se enseña y se respeta
+  x = await nuevo({ corte: { desde: 3, retry: 7200, expone: true } });
+  await conecta(x.page, 'Dropbox'); await conecta(x.page, 'Spotify'); await eligeXml(x.page);
+  await pestana(x.page, 'rekordbox a Spotify');
+  await boton(x.page, 'Simular').click();
+  await x.page.waitForSelector('.aviso.error');
+  es(/Pide esperar 2 h\./.test(await cuerpo(x.page)), 'con plazo legible, dice el que da Spotify');
+  const ct = await x.page.evaluate(() => JSON.parse(localStorage.getItem('ss.corte')));
+  es(ct.espera === 7200 && Math.abs(ct.hasta - ct.t - 7200000) < 5 && ct.cuota === false, 'y no reintenta hasta entonces');
+  await x.ctx.close();
+
+  // primera vez con esta versión: sin lo leído guardado, se parte de la última copia completa
+  x = await nuevo();
+  await conecta(x.page, 'Dropbox'); await conecta(x.page, 'Spotify'); await eligeXml(x.page);
+  await pestana(x.page, 'Copia');
+  await boton(x.page, 'Hacer una copia ahora').click();
+  await x.page.waitForFunction(() => /Guardada: \/copias\//.test(document.body.innerText) && !window.SS.estado.tarea, null, { timeout: 60000 });
+  const foto1 = () => x.page.evaluate(() => JSON.stringify([window.SS.estado.lib.playlists.map(p => [p.id, p.nombre, p.total, p.contenido, p.motivo, p.items]), window.SS.estado.lib.likes]));
+  const entera = await foto1();
+  x.mundo.archivos.delete('/memoria/cache-biblioteca.json'); // como si viniera de una versión que aún no lo guardaba
+  await x.page.reload();
+  await x.page.waitForFunction(() => !!(window.SS && window.SS.estado.xml), null, { timeout: 15000 });
+  g = x.mundo.spGets;
+  await simula(x.page);
+  const lecS = await x.page.evaluate(() => window.SS.estado.lib.lectura);
+  es(lecS.peticiones === 2 && lecS.releidas === 0 && lecS.iguales === 10 && lecS.likes === 'sin cambios' && /partiendo de la copia spotify-completa-/.test(await cuerpo(x.page)), 'sin lo leído guardado se parte de la última copia y la biblioteca solo se comprueba: ' + JSON.stringify(lecS));
+  es(x.mundo.spGets - g === 2 + x.mundo.busquedas, 'el resto de peticiones son las búsquedas de canciones, que se hacen una vez (' + x.mundo.busquedas + ')');
+  es((await foto1()) === entera, 'y lo reconstruido desde la copia es idéntico a lo leído de Spotify');
+  es(x.mundo.archivos.has('/memoria/cache-biblioteca.json') && !JSON.parse(x.mundo.archivos.get('/memoria/cache-biblioteca.json').texto).semilla, 'a partir de ahí queda guardado como lectura normal');
+  // y siempre se puede releer todo a propósito
+  await pestana(x.page, 'Diagnóstico');
+  await boton(x.page, 'Releer todo Spotify').click();
+  await x.page.waitForFunction(() => !window.SS.estado.tarea && window.SS.estado.lib && window.SS.estado.lib.lectura.releidas > 0, null, { timeout: 60000 });
+  const lecT = await x.page.evaluate(() => window.SS.estado.lib.lectura);
+  es(lecT.releidas === 10 && lecT.iguales === 0 && lecT.likes === 'releídos' && (await foto1()) === entera, '«Releer todo Spotify» no se fía de lo guardado y da lo mismo: ' + JSON.stringify(lecT));
+  await x.ctx.close();
+
+  // el otro dispositivo se entera del corte por la memoria común y no gasta ni una petición
+  x = await nuevo();
+  const dia = await x.page.evaluate(() => { const d = new Date(), z = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate()); });
+  x.mundo.pon('/memoria/memoria.json', JSON.stringify({ v: 1, mapa: {}, soundeo: {}, decisiones: {}, ocultas: {}, pares: {},
+    ajustes: { corteSp: { v: { t: Date.now(), hasta: Date.now() + 3600000, cuota: true, motivo: 'QUOTA_EXCEEDED', espera: null, ruta: '/me/playlists' }, t: Date.now() } },
+    uso: { [dia + '|otro']: { n: 500, t: Date.now() } } }));
+  await conecta(x.page, 'Dropbox'); await conecta(x.page, 'Spotify');
+  await x.page.waitForSelector('.corte-sp');
+  es(x.mundo.spGets === 0 && /se ha agotado la cuota del modo desarrollo/.test(await x.page.locator('.corte-sp').innerText()), 'un corte apuntado por otro dispositivo se respeta también aquí, sin gastar peticiones');
+  await pestana(x.page, 'Diagnóstico');
+  es(/Peticiones a Spotify hoy: 500 entre todos tus dispositivos \(este: 0\)/.test(await x.page.locator('#diag').inputValue()), 'y el contador del día suma lo de todos los dispositivos');
   await x.ctx.close();
 
   // otra pestaña / otro dispositivo guardó memoria antes: se une, no se pisa

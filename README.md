@@ -3,13 +3,14 @@
 Web estática (GitHub Pages, sin servidor) para llevar a Spotify lo que hay en rekordbox.
 Se abre en <https://santi7guti.github.io/synchrosound/> desde el PC o el iPhone.
 
-**Estado: fase 1, solo lectura (v0.1.4).** Esta versión lee y enseña; no cambia nada en Spotify.
+**Estado: fase 1, solo lectura (v0.1.5).** Esta versión lee y enseña; no cambia nada en Spotify.
 
 ## Qué hace esta versión
 
 - **Cuentas.** Conecta Dropbox y Spotify (PKCE, sin secretos) y elige el XML de rekordbox dentro de la carpeta de la app en Dropbox.
 - **Copia.** Guarda todas las playlists y los likes de Spotify en un archivo nuevo con fecha (`copias/`). Una copia nunca sustituye a otra.
 - **A, rekordbox a Spotify (simulación).** Empareja las playlists de las carpetas «New School» y «Old Gems» de rekordbox con las playlists `NS - …` y `OG - …` de Spotify y enseña cuatro listas: ya están, se añadirían, dudosas y no están en Spotify. Cualquier pareja se puede rechazar con «No es» (también las que la app da por seguras) y la respuesta se recuerda. Las seguras con aviso salen arriba para repasarlas primero. Si el texto es ambiguo (un «Remix» sin decir de quién, un artista con una letra distinta, artista y título cambiados de sitio), solo se da por segura cuando además coincide la duración. Una dudosa enseña todas sus candidatas y «Ninguna es» las descarta de una vez. Si el archivo es el remix de otra persona y en Spotify solo está la original, no se pregunta: va a «no están». Cada canción lleva un enlace que la abre en la app de Spotify y otro a la web.
+- **Gasta pocas peticiones a Spotify.** Las apps en modo desarrollo tienen una cuota que Spotify no publica. La app guarda en Dropbox lo último que leyó y solo vuelve a pedir las playlists cuyo sello de versión haya cambiado; al cargar la página no pide nada; cuenta las peticiones de cada día; y si Spotify corta (429), para a la primera, dice el motivo y el plazo que dé Spotify y no insiste.
 - **C, sin repartir.** Likes desde una fecha más la playlist «Sound All», menos lo que ya está en alguna `NS -` u `OG -`.
 - **Diagnóstico.** Un resumen en texto para ajustar el buscador de coincidencias. No lleva tokens.
 

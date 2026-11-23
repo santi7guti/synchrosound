@@ -11,14 +11,17 @@ const SITIO = 'https://santi7guti.github.io/synchrosound/';
 const RAIZ = path.join(__dirname, '..');
 const TIPOS = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json' };
 const CORS = { 'access-control-allow-origin': '*', 'access-control-expose-headers': 'Dropbox-API-Result, Retry-After' };
+// Spotify, como el de verdad en las pruebas con cuentas reales, no deja leer Retry-After desde el navegador (salvo que la prueba lo pida).
+const CORS_SP = { 'access-control-allow-origin': '*' };
 const s256 = v => crypto.createHash('sha256').update(v).digest('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
 class Mundo {
   constructor(opc) {
     this.opc = Object.assign({
       scopeSpotify: null,        // null = lo que se pidió
-      limite429: 1,              // cuántas búsquedas devuelven 429 (Retry-After 1) antes de ir bien
-      esperaLarga: 0,            // si >0, a partir de la búsqueda nº esperaLarga devuelve 429 con Retry-After 3600
+      // corte: {desde, cuota, retry, expone}: a partir de la petición nº «desde» a la API, Spotify responde 429.
+      //   cuota: el cuerpo lleva reason QUOTA_EXCEEDED; retry: segundos de Retry-After; expone: el navegador puede leerla.
+      corte: null,
       maxPagina: 30,             // Spotify da como mucho estas por página aunque se pidan más
       prohibido: false,          // todas las lecturas de Spotify dan 403 (cuenta no dada de alta)
       xml: D.xml(),
@@ -27,6 +30,9 @@ class Mundo {
     this.fuera = [];             // peticiones a sitios no previstos
     this.spotifyNoGet = [];
     this.busquedas = 0;
+    this.spGets = 0;             // peticiones GET a la API de Spotify que llegan con token válido
+    this.sp429 = 0;              // cuántas se han respondido con 429
+    this.itemsDe = {};           // id de playlist -> veces que se ha pedido su contenido
     this.autoriza = {};          // parámetros del último /authorize por proveedor
     this.retos = {};             // code -> {reto, prov}
     this.tokens = { sp: new Set(), db: new Set() };
@@ -100,6 +106,16 @@ class Mundo {
       if (metodo !== 'GET') { this.spotifyNoGet.push(metodo + ' ' + u.pathname); return json({ error: { status: 403, message: 'Insufficient client scope' } }, 403); }
       const tok = (req.headers().authorization || '').replace(/^Bearer /, '');
       if (!this.tokens.sp.has(tok)) return json({ error: { status: 401, message: 'The access token expired' } }, 401);
+      this.spGets++;
+      const ct = this.opc.corte;
+      if (ct && this.spGets >= ct.desde) {
+        this.sp429++;
+        const cuerpo = { error: { status: 429, message: ct.cuota ? 'Too many requests' : 'API rate limit exceeded' } };
+        if (ct.cuota) cuerpo.error.reason = 'QUOTA_EXCEEDED';
+        const cab = Object.assign({ 'content-type': 'application/json' }, ct.expone ? CORS : CORS_SP);
+        if (ct.retry != null) cab['retry-after'] = String(ct.retry);
+        return ruta.fulfill({ status: 429, headers: cab, body: JSON.stringify(cuerpo) });
+      }
       if (this.opc.prohibido) return json({ error: { status: 403, message: 'User not registered in the Developer Dashboard' } }, 403);
       const ruta_ = u.pathname.replace(/^\/v1/, '');
       const lim = Math.min(parseInt(u.searchParams.get('limit') || '20', 10), this.opc.maxPagina), off = parseInt(u.searchParams.get('offset') || '0', 10);
@@ -117,6 +133,7 @@ class Mundo {
         const p = D.playlists.find(x => x.id === m[1]);
         if (!p) return json({ error: { status: 404, message: 'Not found' } }, 404);
         if (p.owner.id !== D.YO.id) return json({ error: { status: 403, message: 'Forbidden' } }, 403);
+        this.itemsDe[p.id] = (this.itemsDe[p.id] || 0) + 1;
         return json(pagina(p.pistas, e => ({ added_at: e.added_at, added_by: { id: D.YO.id }, is_local: false, item: e.t })));
       }
       if (/^\/playlists\/[^/]+\/tracks$/.test(ruta_)) return json({ error: { status: 403, message: 'Forbidden' } }, 403); // retirado en 2026
@@ -124,8 +141,6 @@ class Mundo {
       if (ruta_ === '/search') {
         this.busquedas++;
         if (parseInt(u.searchParams.get('limit') || '5', 10) > 10) return json({ error: { status: 400, message: 'Invalid limit' } }, 400);
-        if (this.opc.esperaLarga && this.busquedas >= this.opc.esperaLarga) return json({ error: { status: 429, message: 'API rate limit exceeded' } }, 429, { 'retry-after': '3600' });
-        if (this.opc.limite429 > 0) { this.opc.limite429--; return json({ error: { status: 429, message: 'API rate limit exceeded' } }, 429, { 'retry-after': '1' }); }
         const qt = C.norm(u.searchParams.get('q') || '').split(' ').filter(Boolean);
         const res = D.catalogo.filter(t => !t.soloConExtended || qt.indexOf('extended') >= 0).map(t => {
           const texto = ' ' + C.norm(t.name + ' ' + t.artists.map(a => a.name).join(' ')) + ' ';
