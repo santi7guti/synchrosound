@@ -54,6 +54,11 @@ const cat = {
   mareaCorta: pista('Marea Baja', ['NICO BRENDT'], 176),
   // en Spotify dura bastante más que el archivo: segura, pero la primera que conviene repasar
   rioLarga: pista('Río Arriba', ['Selva Nord'], 301),
+  // cuatro versiones distintas de un título que contiene al del archivo: se enseñan las cuatro
+  humoA: pista('Humo Blanco', ['Vera Luz'], 201),
+  humoRadio: pista('Humo Blanco - Radio Edit', ['Vera Luz'], 178),
+  humoExt: pista('Humo Blanco - Extended Mix', ['Vera Luz'], 392),
+  humoB: pista('Humo Blanco', ['Vera Luz'], 246),
   besosOtro: pista('B.E.S.O.S', ['Banda Equis'], 315),
   altoOtro: pista('Alto', ['Brown Cult'], 177),
   // sueltas para likes y Soundeo
@@ -107,6 +112,7 @@ const R = {
   veneno: rb('Veneno Remix', 'Grupo Lunna', 278),
   marea: rb('Marea Baja', 'Nico Brandt', 381),
   rio: rb('Río Arriba', 'Selva Nord', 214),
+  humo: rb('Humo', 'Vera Luz', 365),
   nube: rb('Algo de SoundCloud', 'Nube', 300, { kind: 'Unknown Format', loc: 'file://localhost/soundcloud:tracks:123456' }),
   sample: rb('Sirena', '', 4, { kind: 'WAV File', loc: 'file://localhost/C:/Users/x/rekordbox/Sampler/OSC_SAMPLER/Sirena.wav' }),
   vieja: rb('Canción Vieja', 'Alguien', 300),
@@ -114,7 +120,7 @@ const R = {
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const arbol = {
   ns: {
-    'House': ['glass', 'paper', 'cobalt', 'errata', 'cumbia', 'perdon', 'extra', 'xtra', 'baila', 'wait', 'nube', 'larga', 'calma', 'besos', 'alto', 'cambiada', 'veneno'],
+    'House': ['glass', 'paper', 'cobalt', 'errata', 'cumbia', 'perdon', 'extra', 'xtra', 'baila', 'wait', 'nube', 'larga', 'calma', 'besos', 'alto', 'cambiada', 'veneno', 'humo'],
     'Techno': ['bus', 'velvet', 'openWater', 'tool', 'ladrillo', 'moveOn', 'current', 'sunrise', 'marea', 'rio'],
     'Raw/UK Garage': ['velvet'],
     'Chill': ['glass'],
@@ -171,11 +177,11 @@ const likes = [
 
 // Qué tiene que salir de la simulación.
 const esperado = {
-  unicas: 29,
+  unicas: 30,
   ya: ['glass', 'tondo', 'silence'],
-  add: { paper: 'paper', cobalt: 'cobaltExt', bus: 'busExt', velvet: 'velvetRmx', signal: 'signal', ladrillo: 'ladrillo', extra: 'extra', xtra: 'xtra', baila: 'bailaExt', wait: 'wait', moveOn: 'moveOn', larga: 'largaExt', rio: 'rioLarga' },
-  duda: { openWater: 'openWater', errata: 'conErrata', cumbia: 'cumbia', perdon: 'perdon', current: 'currentInst', calma: 'calmaLarga', cambiada: 'cambiadaSp', veneno: 'venenoOtro', marea: 'mareaCorta' },
-  no: ['tool', 'sunrise', 'besos', 'alto'],
+  add: { paper: 'paper', cobalt: 'cobaltExt', bus: 'busExt', velvet: 'velvetRmx', signal: 'signal', ladrillo: 'ladrillo', extra: 'extra', xtra: 'xtra', baila: 'bailaExt', wait: 'wait', moveOn: 'moveOn', larga: 'largaExt', rio: 'rioLarga', cambiada: 'cambiadaSp' },
+  duda: { errata: 'conErrata', cumbia: 'cumbia', perdon: 'perdon', current: 'currentInst', calma: 'calmaLarga', veneno: 'venenoOtro', marea: 'mareaCorta', humo: 'humoExt' },
+  no: ['tool', 'sunrise', 'besos', 'alto', 'openWater'],
   sinRepartir: ['like1', 's2', 's1'],
 };
 

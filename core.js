@@ -9,7 +9,7 @@
   'use strict';
 
   // Súbelo cuando cambien las reglas del buscador: invalida lo emparejado con reglas viejas.
-  const MATCHER = 4;
+  const MATCHER = 5;
 
   // ---------- texto ----------
   const RARAS = { 'ø': 'o', 'đ': 'd', 'ł': 'l', 'ß': 'ss', 'æ': 'ae', 'œ': 'oe', 'ð': 'd', 'þ': 'th', 'ı': 'i' };
@@ -275,7 +275,12 @@
     };
     if (a.sabores !== b.sabores) return { ok: false, motivo: 'sabor' };
     if (a.who && b.who) return mismoQuien(a.who, b.who) ? largo() : { ok: false, motivo: 'otro-remix', descarta: true };
-    if (a.who && !b.who) return { ok: false, motivo: 'falta-remix' };
+    if (a.who && !b.who) {
+      // El remix o edit que nombra rekordbox no sale en el título de Spotify.
+      if (mismoQuien(rb.art.join(' '), a.who)) return { ok: false, motivo: 'falta-remix' };       // es del propio artista: se pregunta
+      if (cobertura(toks(a.who), conj(sp.art)) >= 0.85) return { ok: false, motivo: 'remix-en-artistas' }; // figura como artista: se pregunta
+      return { ok: false, motivo: 'falta-remix', descarta: true };                                  // es de otra persona y solo está la original: no vale
+    }
     if (!a.who && b.who) {
       // «Título Remix» sin decir de quién: solo se da por bueno si el remixer que nombra Spotify
       // es el artista que figura en rekordbox. Que coincida el artista original no basta.
@@ -286,6 +291,7 @@
     return largo();
   }
 
+  const MARGEN_DUR = 3; // segundos de diferencia con los que dos duraciones cuentan como la misma
   const NOM_LARGO = { ext: 'Extended', orig: 'Original', radio: 'Radio Edit' };
   const letrasTxt = A => A.letras.map(x => x[0] + ' / ' + x[1]).join(', ');
   const palabraVer = rb => (rb.tit.ver.esRemix ? 'Remix' : 'Edit');
@@ -318,6 +324,7 @@
     if (!V.ok) {
       if (V.motivo === 'sabor') m.push('es otra versión (' + (sp.tit.ver.sabores || rb.tit.ver.sabores) + ')');
       else if (V.motivo === 'falta-remix') m.push('en Spotify está la original, no ' + (rb.tit.ver.who ? 'la de ' + (rb.tit.ver.crudoWho || rb.tit.ver.who) : 'el remix'));
+      else if (V.motivo === 'remix-en-artistas') m.push('en Spotify el título no dice que sea esa versión, pero ' + (rb.tit.ver.crudoWho || rb.tit.ver.who) + ' figura como artista');
       else if (V.motivo === 'es-remix') m.push('en Spotify es un remix' + (sp.tit.ver.who ? ' (' + (sp.tit.ver.crudoWho || sp.tit.ver.who) + ')' : ''));
       else if (V.motivo === 'remix-sin-nombre') m.push('tu título dice «Remix» sin decir de quién, y en Spotify es la mezcla «' + (sp.tit.ver.crudoWho || sp.tit.ver.who) + '»');
     }
@@ -339,9 +346,13 @@
     if (T.nivel === 'no') {
       if (!cambiados(rb, sp)) return { clase: 'no', p: 0 };
       const dd0 = (rb.dur && sp.dur) ? Math.abs(rb.dur - sp.dur) : 30;
+      // Es un texto ambiguo más: se da por segura solo si además coincide la duración.
+      const igual = !!(rb.dur && sp.dur) && dd0 <= MARGEN_DUR;
       return {
-        clase: 'dudosa', p: 70 - Math.min(20, dd0 / 6), dd: dd0, titulo: 'cambiado', artista: 'cambiado', version: 'ok',
-        nota: '', motivos: ['el artista y el título están cambiados de sitio'], otraVersion: false,
+        clase: igual ? 'seguro' : 'dudosa', p: 70 - Math.min(20, dd0 / 6), dd: dd0, titulo: 'cambiado', artista: 'cambiado', version: 'ok',
+        nota: igual ? 'Artista y título cambiados de sitio; la duración coincide' : '',
+        motivos: igual ? [] : ['el artista y el título están cambiados de sitio', rb.dur && sp.dur ? 'dura ' + mmss(sp.dur) + ' en Spotify y ' + mmss(rb.dur) + ' en rekordbox' : 'no se puede comparar la duración'],
+        otraVersion: false, riesgo: igual ? 2 : 0,
       };
     }
     const A = evalArtista(rb, sp);
@@ -388,7 +399,6 @@
   }
 
   const UMBRAL_DUDA = 35;
-  const MARGEN_DUR = 3; // segundos de diferencia con los que dos duraciones cuentan como la misma
   /* Elige entre candidatas. opts.rechazadas: uris marcadas «No es»; opts.enCasa: ids de su biblioteca. */
   function elige(rb, cands, opts) {
     opts = opts || {};
@@ -411,8 +421,7 @@
       const k = aspecto(e.sp);
       if (yaVista.has(k)) continue;
       yaVista.add(k);
-      dudosas.push(e);
-      if (dudosas.length === 3) break;
+      dudosas.push(e); // todas: quien decide las ve de una vez
     }
     return { seguro, dudosas };
   }

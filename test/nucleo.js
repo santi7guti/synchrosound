@@ -47,11 +47,15 @@ es(t.ver.largo === 'radio' && !t.ver.esRemix, 'Edit a secas');
 
 // --- comparación uno a uno ---
 const P = (a, b) => C.puntua(rb(a), sp(b));
+let rv;
 es(P(D.R.glass, D.cat.glass).clase === 'seguro', 'idéntica');
 es(P(D.R.paper, D.cat.paper).clase === 'seguro' && /Sin Extended/.test(P(D.R.paper, D.cat.paper).nota), 'sin Extended vale la Original y se anota');
 es(P(D.R.cobalt, D.cat.cobaltRadio).clase === 'seguro' && /Radio Edit/.test(P(D.R.cobalt, D.cat.cobaltRadio).nota), 'sin Extended vale la Radio Edit y se anota');
 es(P(D.R.velvet, D.cat.velvetOtro).clase === 'no', 'remix de otra persona no vale');
-es(P(D.R.openWater, D.cat.openWater).clase === 'dudosa', 'original en vez de remix es dudosa');
+es(P(D.R.openWater, D.cat.openWater).clase === 'no', 'el remix es de otra persona y en Spotify solo está la original: ni se pregunta');
+es(P({ name: 'Robot Lento (DJ Nadie TOOL)', artist: 'DJ Nadie', dur: 245 }, { id: 'x', name: 'Robot Lento', artists: [{ name: 'DJ Nadie' }], duration_ms: 240000 }).clase === 'dudosa', 'si el remix es del propio artista y solo está la original, se pregunta');
+rv = C.puntua(rb(D.R.openWater), sp({ id: 'x', name: 'Open Water', artists: [{ name: 'Mira Sol' }, { name: 'Juno Park' }], duration_ms: 340000 }));
+es(rv.clase === 'dudosa' && /Juno Park figura como artista/.test(rv.motivos.join()) && rv.version === 'remix-en-artistas', 'si el remixer figura como artista en Spotify, se pregunta');
 es(P(D.R.glass, D.cat.velvetRmx).clase === 'no', 'otra canción');
 es(P(D.R.errata, D.cat.conErrata).clase === 'dudosa', 'título con errata es dudosa');
 es(P(D.R.cumbia, D.cat.cumbia).clase === 'dudosa', 'sin artista es dudosa');
@@ -79,10 +83,13 @@ es(P({ name: 'Glass Harbor', artist: 'Nora Vex', dur: 372 }, { id: 'x', name: 'G
 es(P({ name: 'Veneno Remix', artist: 'DJ Fulano', dur: 280 }, { id: 'x', name: 'Veneno - DJ Fulano Remix', artists: [{ name: 'Grupo Original' }], duration_ms: 281000 }).clase === 'seguro', 'remix sin nombre cuyo autor es el artista');
 es(P({ name: 'Veneno Remix', artist: 'DJ Fulano', dur: 280 }, { id: 'x', name: 'Veneno', artists: [{ name: 'DJ Fulano' }], duration_ms: 281000 }).clase === 'dudosa', 'remix sin nombre frente a original');
 es(P({ name: 'Veneno Remix', artist: 'Grupo Original, DJ Fulano', dur: 280 }, { id: 'x', name: 'Veneno - DJ Fulano Remix', artists: [{ name: 'Grupo Original' }, { name: 'DJ Fulano' }], duration_ms: 281000 }).clase === 'seguro', 'remix sin nombre cuyo remixer es uno de los artistas');
-let rv = P(D.R.veneno, D.cat.venenoRB);
+rv = P(D.R.veneno, D.cat.venenoRB);
 es(rv.clase === 'dudosa' && /sin decir de quién/.test(rv.motivos.join()) && /R & B/.test(rv.motivos.join()), 'remix sin nombre frente a una mezcla con nombre del mismo artista: dudosa (' + rv.clase + ')');
 rv = P(D.R.cambiada, D.cat.cambiadaSp);
-es(rv.clase === 'dudosa' && /cambiados de sitio/.test(rv.motivos.join()), 'artista y título cambiados de sitio: dudosa');
+es(rv.clase === 'seguro' && /Artista y título cambiados de sitio; la duración coincide/.test(rv.nota) && rv.riesgo === 2, 'artista y título cambiados de sitio con la misma duración: segura, con nota (' + rv.clase + ')');
+rv = P({ name: 'Novia Techno Rara', artist: 'PACO ALTO', dur: 250 }, D.cat.cambiadaSp);
+es(rv.clase === 'dudosa' && /cambiados de sitio/.test(rv.motivos.join()) && /dura 5:05 en Spotify y 4:10 en rekordbox/.test(rv.motivos.join()), 'cambiados de sitio con otra duración: dudosa');
+es(C.yaEsta(rb(D.R.cambiada), [sp(D.cat.cambiadaSp)]), 'y si esa pareja ya está en la playlist, cuenta como que ya está');
 es(P({ name: 'Novia Techno Rara', artist: 'OTRO NOMBRE', dur: 305 }, D.cat.cambiadaSp).clase === 'no', 'si solo coincide una mitad, no es un cambio de sitio');
 es(P(D.R.glass, D.cat.cambiadaSp).clase === 'no', 'canciones sin relación siguen sin valer');
 
@@ -155,6 +162,9 @@ es(!e.seguro && e.dudosas.length === 2 && e.dudosas[0].sp.id === D.cat.venenoOtr
 // rechazada la segura, se pasa a la siguiente mejor
 e = C.elige(rb(D.R.extra), todo, { rechazadas: new Set([D.cat.extra.uri]) });
 es(!e.seguro && e.dudosas.length === 1 && e.dudosas[0].sp.id === D.cat.xtra.id, 'con la segura rechazada queda la siguiente como dudosa');
+// se enseñan todas las candidatas, no solo tres
+e = C.elige(rb(D.R.humo), todo, {});
+es(!e.seguro && e.dudosas.length === 4 && e.dudosas[0].sp.id === D.cat.humoExt.id, 'una dudosa enseña todas sus candidatas (' + e.dudosas.length + ')');
 
 // --- búsquedas ---
 let q = C.consultas(rb(D.R.signal));
