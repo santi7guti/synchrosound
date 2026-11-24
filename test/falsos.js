@@ -26,8 +26,17 @@ class Mundo {
       corte: null,
       maxPagina: 30,             // Spotify da como mucho estas por página aunque se pidan más
       prohibido: false,          // todas las lecturas de Spotify dan 403 (cuenta no dada de alta)
+      // escritura: null = Spotify acepta las escrituras bien hechas. {estado, mensaje, cuota, red, llega}: responde con
+      //   ese estado (429 con cuota = QUOTA_EXCEEDED), o con red:true corta la conexión; con llega:true la canción
+      //   se añade igualmente (la escritura llegó aunque la respuesta diga otra cosa o no llegue).
+      escritura: null,
+      playlists: null,           // null = las comunes de datos.js; si no, una copia propia (D.conPrueba().playlists)
       xml: D.xml(),
     }, opc || {});
+    this.playlists = this.opc.playlists || D.playlists;
+    this.escrituras = [];        // todo lo que llega a la API de Spotify y no es GET: {metodo, ruta, q, cuerpo, tipo}
+    this.scopeDe = new Map();    // token de Spotify -> permisos con los que se emitió
+    this.scopeSp = '';           // permisos concedidos en la última autorización de Spotify
     this.peticiones = [];        // {host, metodo, ruta, q}
     this.fuera = [];             // peticiones a sitios no previstos
     this.spotifyNoGet = [];
@@ -56,7 +65,7 @@ class Mundo {
     return { '.tag': 'file', name: a.ruta.split('/').pop(), path_display: a.ruta, path_lower: a.ruta.toLowerCase(), id: 'id:' + a.rev,
       client_modified: a.fecha, server_modified: a.fecha, rev: a.rev, size: Buffer.byteLength(a.texto, 'utf8') };
   }
-  emiteToken(prov) { const t = prov + '-acceso-' + (++this.nTok) + '-' + crypto.randomBytes(6).toString('hex'); this.tokens[prov].add(t); return t; }
+  emiteToken(prov, scope) { const t = prov + '-acceso-' + (++this.nTok) + '-' + crypto.randomBytes(6).toString('hex'); this.tokens[prov].add(t); if (prov === 'sp') this.scopeDe.set(t, scope || ''); return t; }
 
   async instala(contexto) {
     await contexto.route('**/*', ruta => this.atiende(ruta).catch(e => { console.log('  (error en el servicio falso: ' + e.message + ')'); return ruta.abort(); }));
@@ -93,20 +102,55 @@ class Mundo {
         if (!r || r.prov !== prov || s256(p.code_verifier || '') !== r.reto || p.redirect_uri !== r.redirect) return json({ error: 'invalid_grant' }, 400);
         delete this.retos[p.code];
         const scope = prov === 'sp' ? (this.opc.scopeSpotify || r.scope) : 'account_info.read files.content.read files.content.write files.metadata.read';
-        return json({ access_token: this.emiteToken(prov), token_type: 'Bearer', scope, expires_in: prov === 'sp' ? 3600 : 14400, refresh_token: prov + '-refresco-secreto' });
+        if (prov === 'sp') this.scopeSp = scope;
+        return json({ access_token: this.emiteToken(prov, scope), token_type: 'Bearer', scope, expires_in: prov === 'sp' ? 3600 : 14400, refresh_token: prov + '-refresco-secreto' });
       }
       if (p.grant_type === 'refresh_token' && p.refresh_token === prov + '-refresco-secreto') {
         this.refrescos[prov]++;
-        const o = { access_token: this.emiteToken(prov), token_type: 'Bearer', expires_in: prov === 'sp' ? 3600 : 14400 };
-        if (prov === 'sp') o.scope = this.opc.scopeSpotify || 'playlist-read-private playlist-read-collaborative user-library-read';
+        // Al renovar, Spotify mantiene los permisos que se concedieron al autorizar.
+        const sc = prov === 'sp' ? (this.opc.scopeSpotify || this.scopeSp || 'playlist-read-private playlist-read-collaborative user-library-read') : '';
+        const o = { access_token: this.emiteToken(prov, sc), token_type: 'Bearer', expires_in: prov === 'sp' ? 3600 : 14400 };
+        if (prov === 'sp') o.scope = sc;
         return json(o);
       }
       return json({ error: 'invalid_grant' }, 400);
     }
     // ---- API de Spotify ----
     if (u.host === 'api.spotify.com') {
-      if (metodo !== 'GET') { this.spotifyNoGet.push(metodo + ' ' + u.pathname); return json({ error: { status: 403, message: 'Insufficient client scope' } }, 403); }
       const tok = (req.headers().authorization || '').replace(/^Bearer /, '');
+      if (metodo !== 'GET') {
+        // Escrituras. Se apunta todo lo que llega; solo se atiende «añadir canciones a una playlist propia», con el permiso que toca.
+        this.spotifyNoGet.push(metodo + ' ' + u.pathname);
+        const cuerpo = req.postData() || '';
+        this.escrituras.push({ metodo, ruta: u.pathname, q: u.search, cuerpo, tipo: req.headers()['content-type'] || '' });
+        if (!this.tokens.sp.has(tok)) return json({ error: { status: 401, message: 'The access token expired' } }, 401);
+        const prohibe = msg => json({ error: { status: 403, message: msg || 'Forbidden' } }, 403);
+        const mw = u.pathname.match(/^\/v1\/playlists\/([^/]+)\/items$/);
+        if (metodo !== 'POST' || !mw) return prohibe();
+        const pw = this.playlists.find(x => x.id === mw[1]);
+        if (!pw) return json({ error: { status: 404, message: 'Not found' } }, 404);
+        const permisos = (this.scopeDe.get(tok) || '').split(' ');
+        if (permisos.indexOf(pw.public ? 'playlist-modify-public' : 'playlist-modify-private') < 0) return prohibe('Insufficient client scope');
+        if (pw.owner.id !== D.YO.id) return prohibe();
+        let uris = null;
+        try { uris = JSON.parse(cuerpo).uris; } catch (e) { uris = null; }
+        if (!Array.isArray(uris) || !uris.length || uris.length > 100) return json({ error: { status: 400, message: 'Bad request' } }, 400);
+        const aplica = () => {
+          for (const uri of uris) pw.pistas.push({ added_at: new Date().toISOString().replace(/\.\d+Z$/, 'Z'), t: D.catalogo.find(c => c.uri === uri) || { id: uri.split(':').pop(), uri, type: 'track', name: 'Desconocida', artists: [], duration_ms: 0 } });
+          pw.snapshot_id += 'w';
+        };
+        const esc = this.opc.escritura;
+        if (!esc) { aplica(); return json({ snapshot_id: pw.snapshot_id }, 201); }
+        if (esc.llega) aplica();
+        if (esc.red) return ruta.abort('connectionreset');
+        if (esc.estado === 429) {
+          this.sp429++;
+          const c429 = { error: { status: 429, message: 'Too many requests' } };
+          if (esc.cuota) c429.error.reason = 'QUOTA_EXCEEDED';
+          return ruta.fulfill({ status: 429, headers: Object.assign({ 'content-type': 'application/json' }, CORS_SP), body: JSON.stringify(c429) });
+        }
+        return json({ error: { status: esc.estado, message: esc.mensaje || 'Forbidden' } }, esc.estado);
+      }
       if (!this.tokens.sp.has(tok)) return json({ error: { status: 401, message: 'The access token expired' } }, 401);
       this.spGets++;
       const ct = this.opc.corte, ruta_ = u.pathname.replace(/^\/v1/, '');
@@ -124,7 +168,7 @@ class Mundo {
       const pagina = (todos, f) => ({ href: req.url(), items: todos.slice(off, off + lim).map(f), limit: lim, offset: off, total: todos.length, next: off + lim < todos.length ? 'https://api.spotify.com/v1/siguiente' : null, previous: null });
       if (ruta_ === '/me') return json(D.YO);
       if (ruta_ === '/me/playlists') {
-        return json(pagina(D.playlists, p => {
+        return json(pagina(this.playlists, p => {
           const o = { id: p.id, name: p.name, owner: p.owner, collaborative: p.collaborative, public: p.public, description: p.description, snapshot_id: p.snapshot_id, type: 'playlist', uri: 'spotify:playlist:' + p.id };
           if (p.owner.id === D.YO.id) o.items = { href: 'https://api.spotify.com/v1/playlists/' + p.id + '/items', total: p.pistas.length };
           return o;
@@ -132,7 +176,7 @@ class Mundo {
       }
       let m = ruta_.match(/^\/playlists\/([^/]+)\/items$/);
       if (m) {
-        const p = D.playlists.find(x => x.id === m[1]);
+        const p = this.playlists.find(x => x.id === m[1]);
         if (!p) return json({ error: { status: 404, message: 'Not found' } }, 404);
         if (p.owner.id !== D.YO.id) return json({ error: { status: 403, message: 'Forbidden' } }, 403);
         this.itemsDe[p.id] = (this.itemsDe[p.id] || 0) + 1;

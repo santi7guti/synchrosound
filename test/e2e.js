@@ -1,6 +1,7 @@
 /* Pruebas de extremo a extremo con Spotify y Dropbox simulados (ver falsos.js).
    Uso:  NODE_PATH=<carpeta con playwright> CHROME=/ruta/a/chrome node test/e2e.js
-   Comprueba, entre otras cosas, que a Spotify no sale ninguna petición que no sea GET. */
+   Comprueba, entre otras cosas, que a Spotify no sale nada que no sea GET salvo una única llamada:
+   la de la prueba de escritura (un POST con una canción a la playlist «PRUEBA PEGAR»), y solo tras confirmarla. */
 'use strict';
 const { chromium, devices } = require('playwright');
 const path = require('path');
@@ -12,6 +13,9 @@ let ok = 0, mal = 0;
 function es(cond, texto) { if (cond) ok++; else { mal++; console.log('  FALLA: ' + texto); } }
 const SALIDA = process.env.SALIDA || '';
 const LECTURA = 'playlist-read-private playlist-read-collaborative user-library-read';
+const PEDIDOS = LECTURA + ' playlist-modify-public playlist-modify-private';
+// Llama a la puerta de Spotify de la app como lo haría cualquier otro trozo de código: dice si pasó o por qué no.
+const intenta = (page, it) => page.evaluate(([m, r, o]) => window.SS.spotify(m, r, o).then(() => 'pasó', e => e.message), it);
 
 let navegador;
 async function nuevo(opc, ctxOpc) {
@@ -57,7 +61,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
 
   // --- arranque ---
   let t = await cuerpo(page);
-  es(/v0\.1\.6/.test(t), 'se ve el número de versión');
+  es(/v0\.2\.0/.test(t), 'se ve el número de versión');
   es(/Solo lectura/.test(t), 'se ve el indicador de solo lectura');
   es(/Sin conectar en este dispositivo/.test(t), 'empieza sin conectar');
   await foto(page, 'cuentas-vacio' + sufijo);
@@ -68,14 +72,15 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   es(mundo.autoriza.db.token_access_type === 'offline' && mundo.autoriza.db.code_challenge_method === 'S256' && mundo.autoriza.db.redirect_uri === SITIO, 'Dropbox: PKCE con acceso offline y la redirección exacta');
   es(mundo.autoriza.db.client_id === 'd614ryq07qvpgkj', 'Dropbox: clave de la app');
   await conecta(page, 'Spotify');
-  es(mundo.autoriza.sp.scope === LECTURA, 'Spotify: se piden exactamente los tres permisos de lectura (' + mundo.autoriza.sp.scope + ')');
-  es(!/modify/.test(mundo.autoriza.sp.scope), 'Spotify: no se pide ningún permiso de escritura');
+  es(mundo.autoriza.sp.scope === PEDIDOS, 'Spotify: se piden exactamente los tres permisos de lectura y los dos de modificar playlists (' + mundo.autoriza.sp.scope + ')');
+  es(!/library-modify/.test(mundo.autoriza.sp.scope), 'Spotify: no se pide el permiso de tocar los likes');
   es(mundo.autoriza.sp.code_challenge_method === 'S256' && mundo.autoriza.sp.redirect_uri === SITIO && mundo.autoriza.sp.response_type === 'code', 'Spotify: PKCE y la redirección exacta');
   es(mundo.autoriza.sp.client_id === '6251c56f9a7e49d4891a1531e89735ad', 'Spotify: Client ID');
   es(mundo.autoriza.sp.state !== mundo.autoriza.db.state && /^sp\./.test(mundo.autoriza.sp.state) && /^db\./.test(mundo.autoriza.db.state), 'el state distingue Spotify de Dropbox');
   await page.waitForFunction(() => /como Prueba/.test(document.body.innerText) && /como Cuenta de Prueba/.test(document.body.innerText), null, { timeout: 10000 });
   t = await cuerpo(page);
-  es(t.indexOf('Permisos concedidos: ' + LECTURA) >= 0, 'enseña los permisos que Spotify ha concedido');
+  es(t.indexOf('Permisos concedidos: ' + PEDIDOS + '.') >= 0, 'enseña los permisos que Spotify ha concedido');
+  es(/Solo prueba/.test(await page.locator('.candado').innerText()), 'con el permiso de escritura concedido el indicador deja de decir «Solo lectura»');
   es(t.indexOf('no-debe-salir@ejemplo.test') < 0, 'no enseña el correo de Dropbox');
 
   await eligeXml(page);
@@ -322,7 +327,8 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   // --- diagnóstico ---
   await pestana(page, 'Diagnóstico');
   const diag = await page.locator('#diag').inputValue();
-  es(/SynchroSound 0\.1\.6/.test(diag) && /buscador v5/.test(diag) && /escrituras enviadas: 0/.test(diag) && /Simulación/.test(diag) && diag.indexOf('Dudosas (' + (nD - 2) + ')') >= 0, 'el diagnóstico lleva versión, recuentos y dudosas');
+  es(/Permiso de escritura en este dispositivo: sí/.test(diag) && /Prueba de escritura: sin hacer/.test(diag), 'el diagnóstico dice si hay permiso de escritura y si se ha hecho la prueba');
+  es(/SynchroSound 0\.2\.0/.test(diag) && /buscador v5/.test(diag) && /escrituras enviadas: 0/.test(diag) && /Simulación/.test(diag) && diag.indexOf('Dudosas (' + (nD - 2) + ')') >= 0, 'el diagnóstico lleva versión, recuentos y dudosas');
   const usoLs = await page.evaluate(() => JSON.parse(localStorage.getItem('ss.uso')).n);
   es(usoLs === mundo.spGets && diag.indexOf('Peticiones a Spotify hoy: ' + usoLs + ' entre todos tus dispositivos (este: ' + usoLs + ')') >= 0, 'el contador del día coincide con lo que ha recibido Spotify (' + usoLs + ' y ' + mundo.spGets + ')');
   es(/; \d+ peticiones a Spotify\n  playlists releídas: «NS - Techno»\n/.test(diag), 'el diagnóstico dice qué playlists se han releído');
@@ -338,26 +344,32 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   es(diag.indexOf('usuario_prueba') < 0 && diag.indexOf('ejemplo.test') < 0, 'el diagnóstico no lleva el usuario ni el correo');
   await boton(page, 'Copiar').click();
   const porta = await page.evaluate(() => navigator.clipboard.readText()).catch(() => null);
-  if (porta !== null) es(porta.indexOf('SynchroSound 0.1.6') === 0, 'el botón Copiar copia el diagnóstico');
+  if (porta !== null) es(porta.indexOf('SynchroSound 0.2.0') === 0, 'el botón Copiar copia el diagnóstico');
   await foto(page, 'diagnostico' + sufijo);
 
   // --- el candado ---
   await page.locator('.candado').click();
   t = await page.locator('.candado-panel').innerText();
-  es(/0 escrituras/.test(t) && t.indexOf(LECTURA.split(' ').join(', ')) >= 0, 'el panel de solo lectura enseña permisos y escrituras');
+  es(/0 escrituras/.test(t) && t.indexOf(PEDIDOS.split(' ').join(', ')) >= 0, 'el panel del indicador enseña permisos y escrituras');
+  es(/solo deja salir una escritura: añadir 1 canción a tu playlist «PRUEBA PEGAR»/.test(t) && /ya no es Spotify quien impide/.test(t) && /user-library-modify/.test(t), 'y dice qué es lo único que puede escribir, quién lo garantiza ahora y que los likes no se pueden tocar');
   es(/Peticiones a Spotify hoy: \d+ entre todos tus dispositivos/.test(t), 'y cuántas peticiones a Spotify se llevan hoy');
 
-  // --- la puerta: nada que no sea GET sale hacia Spotify ---
+  // --- la puerta: aun con el permiso de escritura concedido, nada que no sea GET sale hacia Spotify ---
   const antes = mundo.peticiones.length;
-  for (const m of ['POST', 'PUT', 'DELETE', 'PATCH']) {
-    const r = await page.evaluate(m => window.SS.spotify(m, '/playlists/x/items').then(() => 'pasó', e => e.message), m);
-    es(/^Bloqueado/.test(r), 'la app corta un ' + m + ' antes de que salga');
-  }
-  es(mundo.peticiones.length === antes, 'los intentos bloqueados no llegan a la red');
-  // y aunque alguien se saltase la puerta, el Spotify simulado (como el real sin permisos) lo rechaza
-  const directo = await page.evaluate(async () => { try { const r = await fetch('https://api.spotify.com/v1/playlists/x/items', { method: 'POST', headers: { Authorization: 'Bearer ' + window.SS.estado.sp.a } }); return r.status; } catch (e) { return 'error'; } });
-  es(directo === 403, 'sin permisos de escritura, Spotify responde 403 a un POST');
-  mundo.spotifyNoGet.length = 0; // ese POST era de la propia prueba
+  const idH = D.playlists.find(p => p.name === 'NS - House').id, uriX = D.cat.like1.uri;
+  const intentos = [
+    ['POST', '/playlists/x/items'], ['PUT', '/playlists/x/items'], ['DELETE', '/playlists/x/items'], ['PATCH', '/playlists/x/items'],
+    ['POST', '/playlists/' + idH + '/items', { cuerpo: { uris: [uriX] } }],
+    ['PUT', '/playlists/' + idH + '/items', { cuerpo: { uris: [uriX] } }],
+    ['DELETE', '/playlists/' + idH + '/items', { cuerpo: { items: [{ uri: uriX }] } }],
+    ['PUT', '/playlists/' + idH, { cuerpo: { name: 'Otro nombre' } }],
+    ['POST', '/me/playlists', { cuerpo: { name: 'Nueva' } }],
+    ['PUT', '/me/tracks', { cuerpo: { ids: ['x'] } }], ['DELETE', '/me/tracks', { cuerpo: { ids: ['x'] } }],
+    ['HEAD', '/me'], ['get', '/me'],
+  ];
+  for (const it of intentos) es(/^Bloqueado/.test(await intenta(page, it)), 'la app corta un ' + it[0] + ' ' + it[1].replace(idH, '<playlist>') + ' antes de que salga');
+  es(mundo.peticiones.length === antes && mundo.escrituras.length === 0, 'los intentos bloqueados no llegan a la red');
+  es((await page.evaluate(() => window.SS.estado.cont.spBloqueadas)) === intentos.length && (await page.evaluate(() => window.SS.estado.cont.spEscr)) === 0, 'y quedan contados como bloqueados, no como enviados');
 
   // --- ancho de pantalla ---
   for (const v of ['Cuentas', 'rekordbox a Spotify', 'Sin repartir', 'Copia', 'Diagnóstico']) {
@@ -369,7 +381,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   // --- resumen de red ---
   const sp = mundo.peticiones.filter(p => p.host === 'api.spotify.com');
   const noGet = sp.filter(p => p.metodo !== 'GET' && p.metodo !== 'OPTIONS');
-  es(noGet.length === 1 && noGet[0].metodo === 'POST', 'a Spotify solo ha salido un no-GET: el POST directo de la prueba (' + noGet.length + ')');
+  es(noGet.length === 0 && mundo.spotifyNoGet.length === 0, 'a Spotify no ha salido ninguna petición que no sea GET (' + noGet.length + ')');
   es(sp.filter(p => p.metodo === 'GET').length > 20, 'lecturas a Spotify: ' + sp.filter(p => p.metodo === 'GET').length);
   es(mundo.fuera.length === 0, 'ninguna petición a otros sitios: ' + mundo.fuera.join(' | '));
   const hosts = Array.from(new Set(mundo.peticiones.map(p => p.host))).sort().join(' ');
@@ -400,10 +412,10 @@ async function casos() {
   es(/Spotify no se ha conectado \(access_denied\)/.test(await cuerpo(x.page)), 'si se deniega el permiso, lo dice');
   await x.ctx.close();
 
-  // Spotify concede más de lo pedido: no se guarda
-  x = await nuevo({ scopeSpotify: 'playlist-read-private playlist-modify-private user-library-read' });
+  // Spotify concede más de lo pedido (tocar los likes): no se guarda
+  x = await nuevo({ scopeSpotify: PEDIDOS + ' user-library-modify' });
   await conecta(x.page, 'Spotify');
-  es(/permisos que esta versión no debe tener \(playlist-modify-private\)/.test(await cuerpo(x.page)), 'si Spotify concediese escritura, la conexión no se guarda');
+  es(/permisos que esta versión no debe tener \(user-library-modify\)/.test(await cuerpo(x.page)), 'si Spotify concediese el permiso de tocar los likes, la conexión no se guarda');
   es(!(await x.page.evaluate(() => window.SS.estado.sp || localStorage.getItem('ss.sp'))), 'y no queda ningún token');
   await x.ctx.close();
 
@@ -854,15 +866,240 @@ async function casos() {
   await x.ctx.close();
 }
 
+async function casosEscritura() {
+  console.log('Prueba de escritura');
+  let x, t;
+  // ================= fase 2, etapa 0: la prueba de escritura =================
+  const conectaTodo = async y => { await conecta(y.page, 'Dropbox'); await conecta(y.page, 'Spotify'); await y.page.waitForFunction(() => /como Prueba/.test(document.body.innerText), null, { timeout: 15000 }); };
+  const prepara = async y => { await pestana(y.page, 'Diagnóstico'); await boton(y.page, 'Preparar la prueba (solo lee)').click(); await y.page.waitForFunction(() => !window.SS.estado.tarea, null, { timeout: 60000 }); };
+  const confirma = async y => {
+    const t0 = await y.page.evaluate(() => (window.SS.estado.prueba ? window.SS.estado.prueba.t : 0));
+    await boton(y.page, 'Confirmar: añadir 1 canción').click();
+    await y.page.waitForFunction(v => !window.SS.estado.tarea && !!window.SS.estado.prueba && window.SS.estado.prueba.t > v, t0, { timeout: 30000 });
+  };
+  const resultado = y => y.page.locator('#prueba-res').innerText();
+  const aSpot = y => y.mundo.peticiones.filter(p => p.host === 'api.spotify.com' && p.metodo !== 'OPTIONS');
+  const lsCorteDe = y => y.page.evaluate(() => JSON.parse(localStorage.getItem('ss.corte')));
+
+  // Conexión antigua, de solo lectura (la que queda de la versión anterior): ni la app ni Spotify dejan escribir
+  let P = D.conPrueba();
+  const tamIni = P.playlists.map(p => p.pistas.length);
+  const rutaP = '/v1/playlists/' + P.prueba.id + '/items';
+  const llamada = ['POST', '/playlists/' + P.prueba.id + '/items', { cuerpo: { uris: [D.cat.like1.uri] } }];
+  x = await nuevo({ playlists: P.playlists, scopeSpotify: LECTURA });
+  await conectaTodo(x);
+  t = await cuerpo(x.page);
+  es(x.mundo.autoriza.sp.scope === PEDIDOS && t.indexOf('Permisos concedidos: ' + LECTURA + '.') >= 0 && /Solo lectura/.test(await x.page.locator('.candado').innerText()), 'con una conexión de solo lectura el indicador sigue diciendo «Solo lectura»');
+  es(/solo con permisos de lectura: todo funciona como antes/.test(t) && await boton(x.page, 'Volver a conectar Spotify').count() === 1, 'y Cuentas explica que para la prueba hay que volver a conectar');
+  await pestana(x.page, 'Sin repartir');
+  await boton(x.page, 'Leer Spotify y calcular').click();
+  await x.page.waitForFunction(() => !!window.SS.estado.c && !window.SS.estado.tarea, null, { timeout: 60000 });
+  await pestana(x.page, 'Diagnóstico');
+  t = await cuerpo(x.page);
+  es(await boton(x.page, 'Preparar la prueba (solo lee)').count() === 0 && /Para la prueba hay que volver a conectarlo/.test(t) && /Permiso de escritura en este dispositivo: no/.test(await x.page.locator('#diag').inputValue()), 'sin el permiso de escritura la prueba no se puede ni preparar');
+  es(/^Bloqueado/.test(await intenta(x.page, llamada)) && x.mundo.escrituras.length === 0, 'y la puerta corta la llamada de la prueba aunque se le pida por otro camino');
+  const directo = await x.page.evaluate(async id => { try { const r = await fetch('https://api.spotify.com/v1/playlists/' + id + '/items', { method: 'POST', headers: { Authorization: 'Bearer ' + window.SS.estado.sp.a, 'Content-Type': 'application/json' }, body: JSON.stringify({ uris: ['spotify:track:x'] }) }); return r.status; } catch (e) { return 'error'; } }, P.prueba.id);
+  es(directo === 403 && P.prueba.pistas.length === 3, 'aunque alguien se saltase la puerta, sin ese permiso Spotify responde 403 y no cambia nada');
+  x.mundo.escrituras.length = 0; x.mundo.spotifyNoGet.length = 0; // ese POST era de la propia prueba
+
+  // Se vuelve a conectar y Spotify concede la escritura: sigue sin salir nada hasta confirmar
+  x.mundo.opc.scopeSpotify = null;
+  await boton(x.page, 'Volver a conectar Spotify').click();
+  await x.page.waitForFunction(() => document.body.innerText.indexOf('Spotify conectado.') >= 0 || !!document.querySelector('.aviso.error'), null, { timeout: 15000 });
+  await x.page.waitForFunction(() => /como Prueba/.test(document.body.innerText), null, { timeout: 15000 });
+  t = await cuerpo(x.page);
+  es(t.indexOf('Permisos concedidos: ' + PEDIDOS + '.') >= 0 && /Solo prueba/.test(await x.page.locator('.candado').innerText()) && !/solo con permisos de lectura/.test(t), 'tras volver a conectar, Spotify concede la escritura y el indicador pasa a «Solo prueba»');
+  es(/^Bloqueado.*falta la confirmación del usuario/.test(await intenta(x.page, llamada)) && x.mundo.escrituras.length === 0, 'con el permiso concedido, la llamada de la prueba sin confirmar no sale');
+  await prepara(x);
+  t = await cuerpo(x.page);
+  es(/Se va a añadir 1 canción a tu playlist «PRUEBA PEGAR», que ahora tiene 3 canciones:/.test(t) && /Iris Mar — Solo Me Gusta/.test(t) && await boton(x.page, 'Confirmar: añadir 1 canción').count() === 1, 'preparar enseña la playlist, cuántas canciones tiene y la canción (el like más reciente)');
+  es(x.mundo.escrituras.length === 0 && P.prueba.pistas.length === 3, 'preparar solo lee');
+  // con la confirmación en pantalla, la misma llamada pedida por otro camino sigue cortada, y cualquier variante también
+  const idOtra = P.playlists.find(p => p.name === 'NS - House').id, uriOk = D.cat.like1.uri;
+  const variantes = [
+    llamada,
+    ['POST', '/playlists/' + idOtra + '/items', { cuerpo: { uris: [uriOk] } }],
+    ['POST', '/playlists/' + P.prueba.id + '/items', { cuerpo: { uris: [uriOk, D.cat.glass.uri] } }],
+    ['POST', '/playlists/' + P.prueba.id + '/items', { cuerpo: { uris: [D.cat.glass.uri] } }],
+    ['POST', '/playlists/' + P.prueba.id + '/items?position=0', { cuerpo: { uris: [uriOk] } }],
+    ['POST', '/playlists/' + P.prueba.id + '/items', { cuerpo: { uris: [uriOk], position: 0 } }],
+    ['PUT', '/playlists/' + P.prueba.id + '/items', { cuerpo: { uris: [uriOk] } }],
+    ['DELETE', '/playlists/' + P.prueba.id + '/items', { cuerpo: { items: [{ uri: uriOk }] } }],
+    ['POST', '/me/playlists', { cuerpo: { name: 'PRUEBA PEGAR' } }],
+    ['PUT', '/me/tracks', { cuerpo: { ids: [D.cat.like1.id] } }],
+  ];
+  const coladas = [];
+  for (const it of variantes) if (!/^Bloqueado/.test(await intenta(x.page, it))) coladas.push(it[0] + ' ' + it[1]);
+  es(coladas.length === 0 && x.mundo.escrituras.length === 0, 'ni la llamada exacta ni sus variantes salen sin pasar por «Confirmar» (' + (coladas.join(', ') || 'ninguna colada') + ')');
+  await boton(x.page, 'Cancelar').click();
+  es(await boton(x.page, 'Confirmar: añadir 1 canción').count() === 0 && x.mundo.escrituras.length === 0, '«Cancelar» cierra la confirmación sin enviar nada');
+
+  // La prueba, confirmada: sale una sola llamada, la esperada
+  await prepara(x);
+  let nPet = aSpot(x).length;
+  await confirma(x);
+  let trio = aSpot(x).slice(nPet).map(p => p.metodo + ' ' + p.ruta);
+  es(trio.join(' | ') === 'GET ' + rutaP + ' | POST ' + rutaP + ' | GET ' + rutaP, 'al confirmar: relee la playlist de Spotify, envía una escritura y vuelve a leerla (' + trio.join(' | ').split(P.prueba.id).join('<prueba>') + ')');
+  let w = x.mundo.escrituras;
+  es(w.length === 1 && w[0].metodo === 'POST' && w[0].ruta === rutaP && w[0].q === '' && w[0].cuerpo === JSON.stringify({ uris: [uriOk] }) && /^application\/json/.test(w[0].tipo),
+    'lo único que sale que no es GET: un POST a la playlist «PRUEBA PEGAR» con esa canción y nada más (' + w.map(e => e.metodo + ' ' + e.cuerpo).join(' | ') + ')');
+  es(P.prueba.pistas.length === 4 && P.prueba.pistas[3].t.id === D.cat.like1.id, 'y en Spotify la playlist pasa de 3 a 4 canciones, con esa al final');
+  es(P.playlists.every((p, i) => p === P.prueba || p.pistas.length === tamIni[i]) && D.playlists.find(p => p.name === 'NS - House').pistas.length === 2, 'ninguna otra playlist cambia');
+  t = await resultado(x);
+  es(/Iris Mar — Solo Me Gusta/.test(t) && /Spotify ha aceptado la escritura \(201\)\. Comprobado releyendo la playlist: la canción está \(3 canciones antes, 4 canciones ahora\)\./.test(t), 'el resultado dice que Spotify la aceptó y que se ha comprobado releyendo: ' + t.slice(0, 160));
+  let dg = await x.page.locator('#diag').inputValue();
+  es(/escrituras enviadas: 1;/.test(dg) && /Prueba de escritura: [^\n]* \(v0\.2\.0\) en «PRUEBA PEGAR» \(pública\); canción: Iris Mar — Solo Me Gusta\n  antes: 3; enviada: sí, una vez; respuesta: 201; sello nuevo: sí; error: ninguno\n  después: 4; la canción está: 1 vez\n  resultado: Spotify ha aceptado/.test(dg), 'y el diagnóstico lleva la prueba entera');
+  es((await x.page.evaluate(() => JSON.parse(localStorage.getItem('ss.uso')).n)) === x.mundo.spGets + 1, 'la escritura cuenta en las peticiones del día');
+  await x.page.locator('.candado').click();
+  es(/y 1 escritura\./.test(await x.page.locator('.candado-panel').innerText()), 'y en el panel del indicador');
+  await x.page.locator('.candado').click();
+  // una segunda vez en la misma carga de página: no hay botón y la puerta no deja
+  es(await boton(x.page, 'Preparar la prueba (solo lee)').count() === 0 && /esta versión no envía más de una\. Para repetir la prueba, recarga la página/.test(await cuerpo(x.page)), 'tras una escritura, en esa carga de página ya no se ofrece otra');
+  es(/^Bloqueado/.test(await intenta(x.page, ['POST', '/playlists/' + P.prueba.id + '/items', { cuerpo: { uris: [D.cat.glass.uri] } }])) && x.mundo.escrituras.length === 1, 'y la puerta tampoco deja salir otra');
+  // el tope de una por carga está en la puerta, no solo en la pantalla: aunque la pantalla volviese a ofrecerla, no sale
+  await x.page.evaluate(() => { window.SS.estado.cont.spEscr = 0; window.SS.pinta(); });
+  await prepara(x);
+  await confirma(x);
+  t = await resultado(x);
+  es(x.mundo.escrituras.length === 1 && P.prueba.pistas.length === 4 && /No se ha enviado nada a Spotify\. Bloqueado: [^\n]*ya se ha enviado una escritura desde que se cargó la página/.test(t), 'una segunda escritura confirmada en la misma carga de página se corta en la puerta: ' + t.slice(-120));
+  // al recargar se ve el último resultado y se puede preparar otra: elige el siguiente like, porque el primero ya está
+  await x.page.reload();
+  await x.page.waitForFunction(() => !!(window.SS && window.SS.estado.memLista), null, { timeout: 15000 });
+  es(/Última prueba/.test(await resultado(x)) && /Prueba de escritura: [^\n]*canción: Nora Vex — Glass Harbor\n  antes: 4; enviada: no;/.test(await x.page.locator('#diag').inputValue()), 'al recargar, el último resultado sigue a la vista y en el diagnóstico');
+  await prepara(x);
+  t = await cuerpo(x.page);
+  es(/que ahora tiene 4 canciones:/.test(t) && /Nora Vex — Glass Harbor/.test(t), 'otra prueba elige el siguiente like que no esté ya en la playlist');
+  await boton(x.page, 'Cancelar').click();
+  es(x.mundo.escrituras.length === 1 && x.mundo.spotifyNoGet.join() === 'POST ' + rutaP, 'en todo el caso, a Spotify solo ha salido esa escritura');
+  let raros3 = x.consola.filter(m => !/^Bloqueado|Error: Bloqueado/.test(m));
+  es(raros3.length === 0, 'la prueba de escritura, sin errores en la consola: ' + raros3.slice(0, 3).join(' | '));
+  await x.ctx.close();
+
+  // Spotify rechaza o falla: una sola escritura, nunca se reintenta, y se relee la playlist para comparar
+  const fallos = [
+    { n: 'un 403', esc: { estado: 403, mensaje: 'Forbidden' }, queda: 3, re: /Spotify ha rechazado la escritura: Spotify respondió 403: Forbidden [^.]*\. Comprobado releyendo la playlist: la canción no está \(3 canciones antes, 3 canciones ahora\)\. La escritura no se ha repetido\./ },
+    { n: 'un 405', esc: { estado: 405, mensaje: 'Method not allowed' }, queda: 3, re: /Spotify ha rechazado la escritura: Spotify respondió 405: Method not allowed [^.]*\. Comprobado releyendo la playlist: la canción no está/ },
+    { n: 'un 401', esc: { estado: 401, mensaje: 'The access token expired' }, queda: 3, re: /Spotify ha rechazado la escritura: Spotify respondió 401[^.]*\. Comprobado releyendo la playlist: la canción no está/ },
+    { n: 'un 500 que no llegó a aplicarse', esc: { estado: 500, mensaje: 'Server error' }, queda: 3, re: /Enviada una vez, y no se sabe si llegó a Spotify: Spotify respondió 500: Server error [^.]*\. Comprobado releyendo la playlist: la canción no está \(3 canciones antes, 3 canciones ahora\)\. La escritura no se ha repetido\./ },
+    { n: 'un 500 que sí se aplicó', esc: { estado: 500, mensaje: 'Server error', llega: true }, queda: 4, re: /Enviada una vez, y no se sabe si llegó a Spotify: Spotify respondió 500[^.]*\. Comprobado releyendo la playlist: la canción está \(3 canciones antes, 4 canciones ahora\)\. La escritura no se ha repetido\./ },
+    { n: 'la conexión se corta y no llegó', esc: { red: true }, queda: 3, re: /Enviada una vez, y no se sabe si llegó a Spotify: Se cortó la conexión con Spotify al enviar la escritura\. Comprobado releyendo la playlist: la canción no está \(3 canciones antes, 3 canciones ahora\)\. La escritura no se ha repetido\./ },
+    { n: 'la conexión se corta pero sí llegó', esc: { red: true, llega: true }, queda: 4, re: /Enviada una vez, y no se sabe si llegó a Spotify: Se cortó la conexión con Spotify al enviar la escritura\. Comprobado releyendo la playlist: la canción está \(3 canciones antes, 4 canciones ahora\)\. La escritura no se ha repetido\./ },
+  ];
+  for (const f of fallos) {
+    P = D.conPrueba();
+    x = await nuevo({ playlists: P.playlists, escritura: f.esc });
+    await conectaTodo(x);
+    await prepara(x);
+    nPet = aSpot(x).length;
+    await confirma(x);
+    trio = aSpot(x).slice(nPet).map(p => p.metodo);
+    es(x.mundo.escrituras.length === 1 && trio.join(' ') === 'GET POST GET' && x.mundo.refrescos.sp === 0, 'si Spotify responde con ' + f.n + ': una sola escritura, sin reintentos, y después relee (' + trio.join(' ') + ')');
+    t = await resultado(x);
+    es(f.re.test(t) && P.prueba.pistas.length === f.queda, 'y dice lo que ha pasado de verdad (' + f.n + '): ' + t.replace(/^[^:]*:[^:]*: /, '').slice(0, 150));
+    es(await boton(x.page, 'Preparar la prueba (solo lee)').count() === 0 && /^Bloqueado/.test(await intenta(x.page, ['POST', '/playlists/' + P.prueba.id + '/items', { cuerpo: { uris: [D.cat.like1.uri] } }])) && x.mundo.escrituras.length === 1, 'y no se ofrece ni se deja repetirla en esa carga (' + f.n + ')');
+    await x.ctx.close();
+  }
+
+  // Spotify corta (429) justo en la escritura: no se envía nada más, ni la comprobación, y no se «prueba» repitiéndola
+  P = D.conPrueba();
+  x = await nuevo({ playlists: P.playlists, escritura: { estado: 429, cuota: true } });
+  await conectaTodo(x);
+  await prepara(x);
+  nPet = aSpot(x).length;
+  await confirma(x);
+  trio = aSpot(x).slice(nPet).map(p => p.metodo);
+  es(x.mundo.escrituras.length === 1 && trio.join(' ') === 'GET POST' && P.prueba.pistas.length === 3, 'un 429 a la escritura: se para ahí y no se envía ni la lectura de comprobación (' + trio.join(' ') + ')');
+  es(/Enviada una vez, y Spotify la ha cortado: Límite de peticiones de Spotify \(cuota agotada\)\. No se puede comprobar ahora y la escritura no se repite/.test(await resultado(x)), 'y el resultado lo dice');
+  let cw = await lsCorteDe(x);
+  es(cw && cw.escr === true && cw.cuota === true && cw.ruta === '/playlists/' + P.prueba.id + '/items' && !cw.fin, 'el corte queda apuntado como corte de una escritura');
+  t = await x.page.locator('.corte-sp').innerText();
+  es(/El rechazo fue a una escritura\./.test(t) && /La app no repite una escritura para probar/.test(t) && await boton(x.page, 'Probar ahora (gasta 1 petición)').count() === 0, 'y el aviso no ofrece «Probar ahora»: la app no escribe para probar');
+  es(/Último corte de Spotify: [^\n]*\/items \(escritura\); motivo: QUOTA_EXCEEDED/.test(await x.page.locator('#diag').inputValue()), 'el diagnóstico dice que el corte fue a una escritura');
+  await x.page.evaluate(() => { const c = JSON.parse(localStorage.getItem('ss.corte')); c.hasta = Date.now() - 1; localStorage.setItem('ss.corte', JSON.stringify(c)); });
+  await x.page.evaluate(id => window.SS.spotify('GET', '/playlists/' + id + '/items?limit=1'), P.prueba.id);
+  es(!(await lsCorteDe(x)).fin, 'que después responda una lectura no da por terminado el corte de una escritura');
+  await x.ctx.close();
+
+  // La playlist de la prueba tiene que ser una sola, tuya, y llamarse exactamente así: si no, no se llega ni a confirmar
+  x = await nuevo(); // la biblioteca común no tiene «PRUEBA PEGAR»
+  await conectaTodo(x);
+  const sinConfirmar = async () => await boton(x.page, 'Confirmar: añadir 1 canción').count() === 0 && x.mundo.escrituras.length === 0;
+  await prepara(x);
+  es(/No encuentro ninguna playlist que se llame exactamente «PRUEBA PEGAR»/.test(await cuerpo(x.page)) && await sinConfirmar(), 'sin la playlist «PRUEBA PEGAR» la prueba no se prepara');
+  x.mundo.playlists = D.conPrueba(null, { name: 'Prueba pegar' }).playlists;
+  await prepara(x);
+  es(await sinConfirmar() && await x.page.locator('.aviso.error', { hasText: 'No encuentro ninguna playlist' }).count() >= 1, 'un nombre parecido («Prueba pegar») no vale');
+  x.mundo.playlists = D.conPrueba([D.playlist('PRUEBA PEGAR', [])]).playlists;
+  await prepara(x);
+  es(/Hay 2 playlists que se llaman «PRUEBA PEGAR»/.test(await cuerpo(x.page)) && await sinConfirmar(), 'con dos playlists con ese nombre, tampoco');
+  x.mundo.playlists = D.conPrueba(null, { owner: { id: 'otra_persona', display_name: 'Otra' } }).playlists;
+  await prepara(x);
+  es(/«PRUEBA PEGAR» no es tuya/.test(await cuerpo(x.page)) && await sinConfirmar(), 'ni si la playlist es de otra persona');
+  await x.ctx.close();
+
+  // Entre preparar y confirmar la playlist cambia: se relee justo antes de escribir y, si la canción ya está, no se envía
+  P = D.conPrueba();
+  x = await nuevo({ playlists: P.playlists });
+  await conectaTodo(x);
+  await prepara(x);
+  P.prueba.pistas.push({ added_at: '2026-11-24T10:00:00Z', t: D.cat.like1 }); P.prueba.snapshot_id += 'm'; // alguien la añade a mano
+  nPet = aSpot(x).length;
+  await confirma(x);
+  es(x.mundo.escrituras.length === 0 && aSpot(x).length === nPet + 1 && /No se ha enviado nada a Spotify\. La canción ya estaba en la playlist al releerla/.test(await resultado(x)), 'si al releer justo antes la canción ya está, no se envía nada');
+  // una preparación vieja no vale
+  await prepara(x);
+  await x.page.evaluate(() => { window.SS.estado.pruebaPrep.t -= 11 * 60000; });
+  nPet = aSpot(x).length;
+  await boton(x.page, 'Confirmar: añadir 1 canción').click();
+  await x.page.waitForFunction(() => !window.SS.estado.tarea && /Han pasado más de 10 minutos/.test(document.body.innerText), null, { timeout: 15000 });
+  es(x.mundo.escrituras.length === 0 && aSpot(x).length === nPet && await boton(x.page, 'Confirmar: añadir 1 canción').count() === 0, 'una confirmación sobre una preparación de hace más de 10 minutos no envía nada');
+  await x.ctx.close();
+
+  // Con la confirmación de verdad, la puerta vuelve a comprobarlo todo por su cuenta: si algo no cuadra, no sale
+  P = D.conPrueba();
+  x = await nuevo({ playlists: P.playlists });
+  await conectaTodo(x);
+  const idCasa = P.playlists.find(p => p.name === 'NS - House'), tamCasa = idCasa.pistas.length;
+  const trampas = [
+    { n: 'la playlist ya no se llama «PRUEBA PEGAR»', f: () => { window.SS.estado.lib.playlists.find(p => p.nombre === 'PRUEBA PEGAR').nombre = 'Otra cosa'; }, re: /el destino no es tu playlist «PRUEBA PEGAR»/ },
+    { n: 'la playlist consta como de otra persona', f: () => { window.SS.estado.lib.playlists.find(p => p.nombre === 'PRUEBA PEGAR').propia = false; }, re: /el destino no es tu playlist «PRUEBA PEGAR»/ },
+    { n: 'el destino es otra playlist', f: id => { window.SS.estado.pruebaPrep.id = id; }, arg: idCasa.id, re: /el destino no es tu playlist «PRUEBA PEGAR»/ },
+    { n: 'lo que se añade no es una canción', f: () => { window.SS.estado.pruebaPrep.m.u = 'spotify:episode:0000000000000000000000'; }, re: /el cuerpo no es exactamente la canción confirmada/ },
+    { n: 'el permiso de escritura ya no consta', f: () => { window.SS.estado.sp.scope = 'playlist-read-private playlist-read-collaborative user-library-read'; }, re: /Spotify no ha concedido el permiso de escritura/,
+      despues: () => { window.SS.estado.sp.scope += ' playlist-modify-public playlist-modify-private'; window.SS.pinta(); } },
+  ];
+  for (const tr of trampas) {
+    await prepara(x);
+    await x.page.evaluate(tr.f, tr.arg);
+    await confirma(x);
+    t = await resultado(x);
+    es(x.mundo.escrituras.length === 0 && P.prueba.pistas.length === 3 && idCasa.pistas.length === tamCasa && /No se ha enviado nada a Spotify\. Bloqueado:/.test(t) && tr.re.test(t), 'confirmada, pero ' + tr.n + ': la puerta no la deja salir (' + t.slice(-90) + ')');
+    if (tr.despues) await x.page.evaluate(tr.despues);
+  }
+  es((await x.page.evaluate(() => window.SS.estado.cont.spBloqueadas)) === trampas.length && (await x.page.evaluate(() => window.SS.estado.cont.spEscr)) === 0, 'y todas quedan contadas como bloqueadas');
+  await x.ctx.close();
+
+  // Spotify concede solo uno de los dos permisos de escritura: no se ofrece la prueba, pero el indicador ya no dice «Solo lectura»
+  x = await nuevo({ playlists: D.conPrueba().playlists, scopeSpotify: LECTURA + ' playlist-modify-public' });
+  await conectaTodo(x);
+  await pestana(x.page, 'Diagnóstico');
+  es(/Solo prueba/.test(await x.page.locator('.candado').innerText()) && await boton(x.page, 'Preparar la prueba (solo lee)').count() === 0, 'con solo uno de los dos permisos de escritura no se ofrece la prueba y el indicador no dice «Solo lectura»');
+  await x.ctx.close();
+}
+
 (async () => {
   const exe = process.env.CHROME;
   navegador = await chromium.launch(exe ? { executablePath: exe } : {});
   if (SALIDA) fs.mkdirSync(SALIDA, { recursive: true });
   try {
-    await flujoCompleto('Flujo completo en escritorio', { viewport: { width: 1100, height: 800 } }, '-pc');
-    await flujoCompleto('Flujo completo emulando iPhone', Object.assign({}, devices['iPhone 14'], { defaultBrowserType: undefined }), '-iphone');
-    await flujoCompleto('Flujo completo en modo oscuro', { viewport: { width: 900, height: 800 }, colorScheme: 'dark' }, '-oscuro');
-    await casos();
+    // SOLO=escritura pasa solo las pruebas de la escritura (un minuto en vez de varios); sin SOLO se pasa todo.
+    if (process.env.SOLO !== 'escritura') {
+      await flujoCompleto('Flujo completo en escritorio', { viewport: { width: 1100, height: 800 } }, '-pc');
+      await flujoCompleto('Flujo completo emulando iPhone', Object.assign({}, devices['iPhone 14'], { defaultBrowserType: undefined }), '-iphone');
+      await flujoCompleto('Flujo completo en modo oscuro', { viewport: { width: 900, height: 800 }, colorScheme: 'dark' }, '-oscuro');
+      await casos();
+    }
+    await casosEscritura();
   } catch (e) { mal++; console.log('  ERROR en las pruebas: ' + (e.stack || e)); }
   await navegador.close();
   console.log('Extremo a extremo: ' + ok + ' comprobaciones bien, ' + mal + ' mal.');

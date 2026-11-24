@@ -175,6 +175,14 @@ const likes = [
   { added_at: '2026-10-17T09:00:00Z', t: cat.s2 },         // like y además Sound Try
 ].concat(relleno.slice(120, 190).map((t, i) => ({ added_at: '2026-07-' + String(1 + (i % 27)).padStart(2, '0') + 'T08:00:00Z', t })));
 
+// Para las pruebas de escritura: la misma biblioteca en copia aparte (lo que se escriba no toca los datos comunes),
+// con la playlist de la prueba. «otras» = playlists de más (p. ej. una segunda con el mismo nombre).
+function conPrueba(otras, cambios) {
+  const copia = playlists.map(p => Object.assign({}, p, { pistas: p.pistas.slice() }));
+  const prueba = playlist('PRUEBA PEGAR', [cat.lady, cat.perdon, cat.cumbia], Object.assign({ public: true }, cambios || {}));
+  return { playlists: copia.concat([prueba], otras || []), prueba };
+}
+
 // Qué tiene que salir de la simulación.
 const esperado = {
   unicas: 30,
@@ -185,4 +193,4 @@ const esperado = {
   sinRepartir: ['like1', 's2', 's1'],
 };
 
-module.exports = { cat, catalogo, relleno, R, rbPistas, arbol, xml, YO, playlists, likes, esperado };
+module.exports = { cat, catalogo, relleno, R, rbPistas, arbol, xml, YO, playlist, playlists, conPrueba, likes, esperado };
