@@ -57,7 +57,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
 
   // --- arranque ---
   let t = await cuerpo(page);
-  es(/v0\.1\.5/.test(t), 'se ve el número de versión');
+  es(/v0\.1\.6/.test(t), 'se ve el número de versión');
   es(/Solo lectura/.test(t), 'se ve el indicador de solo lectura');
   es(/Sin conectar en este dispositivo/.test(t), 'empieza sin conectar');
   await foto(page, 'cuentas-vacio' + sufijo);
@@ -322,9 +322,10 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   // --- diagnóstico ---
   await pestana(page, 'Diagnóstico');
   const diag = await page.locator('#diag').inputValue();
-  es(/SynchroSound 0\.1\.5/.test(diag) && /buscador v5/.test(diag) && /escrituras enviadas: 0/.test(diag) && /Simulación/.test(diag) && diag.indexOf('Dudosas (' + (nD - 2) + ')') >= 0, 'el diagnóstico lleva versión, recuentos y dudosas');
+  es(/SynchroSound 0\.1\.6/.test(diag) && /buscador v5/.test(diag) && /escrituras enviadas: 0/.test(diag) && /Simulación/.test(diag) && diag.indexOf('Dudosas (' + (nD - 2) + ')') >= 0, 'el diagnóstico lleva versión, recuentos y dudosas');
   const usoLs = await page.evaluate(() => JSON.parse(localStorage.getItem('ss.uso')).n);
   es(usoLs === mundo.spGets && diag.indexOf('Peticiones a Spotify hoy: ' + usoLs + ' entre todos tus dispositivos (este: ' + usoLs + ')') >= 0, 'el contador del día coincide con lo que ha recibido Spotify (' + usoLs + ' y ' + mundo.spGets + ')');
+  es(/; \d+ peticiones a Spotify\n  playlists releídas: «NS - Techno»\n/.test(diag), 'el diagnóstico dice qué playlists se han releído');
   es(/Último corte de Spotify: ninguno apuntado/.test(diag) && /XML: \/rekordbox\.xml \(\d+ KB\), último cambio 23\/11\/2026 14:05, comprobado \d\d:\d\d/.test(diag), 'el diagnóstico dice si ha habido cortes y de cuándo es el XML');
   es(diag.indexOf('Se añadirían (' + nA + '):') >= 0 && Object.keys(E.add).every(k => diag.indexOf(D.R[k].name) >= 0), 'el diagnóstico lista todas las que se añadirían');
   es(/Se añadirían \(\d+\):\n  con aviso \d+, que van primero[^\n]*\n  r3 Selva Nord — Río Arriba \[3:34\] -> Selva Nord — Río Arriba \[5:01\] \| dura 5:01 en Spotify y 3:34 en rekordbox/.test(diag), 'y las ordena igual que la pantalla, con su nivel de aviso');
@@ -337,7 +338,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   es(diag.indexOf('usuario_prueba') < 0 && diag.indexOf('ejemplo.test') < 0, 'el diagnóstico no lleva el usuario ni el correo');
   await boton(page, 'Copiar').click();
   const porta = await page.evaluate(() => navigator.clipboard.readText()).catch(() => null);
-  if (porta !== null) es(porta.indexOf('SynchroSound 0.1.5') === 0, 'el botón Copiar copia el diagnóstico');
+  if (porta !== null) es(porta.indexOf('SynchroSound 0.1.6') === 0, 'el botón Copiar copia el diagnóstico');
   await foto(page, 'diagnostico' + sufijo);
 
   // --- el candado ---
@@ -471,6 +472,8 @@ async function casos() {
   await boton(x.page, 'Probar ahora (gasta 1 petición)').click();
   await x.page.waitForFunction(() => /Spotify vuelve a responder/.test(document.body.innerText) && !window.SS.estado.tarea);
   es(x.mundo.spGets === g + 1 && await x.page.locator('.corte-sp').count() === 0, 'la prueba a mano gasta una sola petición y, si va bien, quita el aviso');
+  const pBus = x.mundo.peticiones.filter(p => p.host === 'api.spotify.com').slice(-1)[0];
+  es(pBus.ruta === '/v1/search' && /limit=1/.test(pBus.q) && /[?&]q=[^&]+/.test(pBus.q), 'y prueba la llamada que se cortó (una búsqueda, con texto que buscar), no el perfil (' + pBus.ruta + pBus.q + ')');
   await simula(x.page, 'Simular otra vez');
   es(!(await x.page.evaluate(() => window.SS.estado.sim.incompleta)), 'y la simulación ya termina');
   await pestana(x.page, 'Diagnóstico');
@@ -489,13 +492,260 @@ async function casos() {
   const leidas = D.playlists.slice(0, 3).map(p => p.id);
   es(leidas.every(id => x.mundo.itemsDe[id] === 1), 'antes del corte había leído tres playlists');
   await pestana(x.page, 'Diagnóstico');
-  es(/motivo: QUOTA_EXCEEDED; plazo: no legible; la app no reintenta antes de /.test(await x.page.locator('#diag').inputValue()), 'y el diagnóstico apunta el motivo que da Spotify');
+  es(/motivo: QUOTA_EXCEEDED; plazo: no legible; los botones no envían nada hasta [^\n]*\(la app nunca prueba sola\)/.test(await x.page.locator('#diag').inputValue()), 'y el diagnóstico apunta el motivo que da Spotify');
   x.mundo.opc.corte = null;
   await pestana(x.page, 'rekordbox a Spotify');
   await boton(x.page, 'Probar ahora (gasta 1 petición)').click();
   await x.page.waitForFunction(() => /Spotify vuelve a responder/.test(document.body.innerText) && !window.SS.estado.tarea);
   await simula(x.page);
   es(leidas.every(id => x.mundo.itemsDe[id] === 1) && !(await x.page.evaluate(() => window.SS.estado.sim.incompleta)), 'al seguir, las playlists ya leídas no se vuelven a pedir');
+  await x.ctx.close();
+
+  // corte parcial (Spotify corta por grupos de llamadas): el perfil responde y las playlists no
+  x = await nuevo({ corte: { desde: 1, cuota: true, rutas: ['/me/playlists'] } });
+  await conecta(x.page, 'Dropbox'); await conecta(x.page, 'Spotify'); await eligeXml(x.page);
+  await x.page.waitForFunction(() => /como Prueba/.test(document.body.innerText), null, { timeout: 15000 });
+  es(x.mundo.sp429 === 0, 'corte parcial: el perfil sí responde');
+  await pestana(x.page, 'rekordbox a Spotify');
+  await boton(x.page, 'Simular').click();
+  await x.page.waitForSelector('.corte-sp');
+  await x.page.waitForFunction(() => !window.SS.estado.tarea);
+  es(x.mundo.sp429 === 1 && /se ha agotado la cuota/.test(await cuerpo(x.page)), 'las playlists dan 429 y se para');
+  t = await x.page.locator('.corte-sp').innerText();
+  es(/los botones no envían nada a Spotify/.test(t) && /La app no prueba sola/.test(t) && !/no lo intentará/.test(t), 'el aviso no da a entender que la app vaya a probar sola');
+  es(/Prueba la misma llamada que rechazó Spotify \(\/me\/playlists\)/.test(t), 'y dice qué llamada se prueba');
+  const aSp = () => x.mundo.peticiones.filter(p => p.host === 'api.spotify.com');
+  let nSp = aSp().length;
+  await boton(x.page, 'Probar ahora (gasta 1 petición)').click();
+  await x.page.waitForFunction(() => !window.SS.estado.tarea);
+  const pr = aSp().slice(nSp);
+  es(pr.length === 1 && pr[0].ruta === '/v1/me/playlists' && pr[0].q === '?limit=1', '«Probar ahora» pide la llamada rechazada, con lo mínimo (' + pr.map(p => p.ruta + p.q).join(', ') + ')');
+  es(x.mundo.sp429 === 2 && !/Spotify vuelve a responder/.test(await cuerpo(x.page)) && await x.page.locator('.corte-sp').count() === 1, 'si sigue cortada, no dice que Spotify ha vuelto y el aviso sigue');
+  await x.page.evaluate(() => window.SS.spotify('GET', '/me', { aunque: true }));
+  es(!(await x.page.evaluate(() => JSON.parse(localStorage.getItem('ss.corte')).fin)), 'que responda el perfil no termina un corte de las playlists');
+  // el plazo escrito a mano
+  const campo = x.page.locator('#retry-mano');
+  es(await campo.count() === 1 && /F12 → Network → la última fila en rojo → Headers → Response headers → Retry-After/.test(await x.page.locator('.corte-sp').innerText()), 'el aviso lleva la casilla del plazo y cómo leerlo');
+  await campo.fill('abc');
+  await boton(x.page, 'Guardar plazo').click();
+  es(/Escribe solo el número entero que pone en Retry-After/.test(await cuerpo(x.page)) && !(await x.page.evaluate(() => JSON.parse(localStorage.getItem('ss.corte')).mano)), 'un plazo que no es un número no se guarda');
+  const lsCorte = () => x.page.evaluate(() => JSON.parse(localStorage.getItem('ss.corte')));
+  const malos = ['', ' ', '0', '00', '-5', '+90', '9000s', 's9000', '1.5', '9.000', '9,000', '9 000', '1e3', '0x10', '604801', '9999999', '９０００'];
+  const colados = [];
+  for (const v of malos) {
+    await campo.fill(v);
+    await boton(x.page, 'Guardar plazo').click();
+    if ((await lsCorte()).mano || await boton(x.page, 'Sí, es correcto').count()) colados.push(JSON.stringify(v));
+  }
+  es(colados.length === 0 && await x.page.locator('.corte-sp').count() === 1, 'no se guarda ni se reinterpreta nada que no sea un número entero de segundos entre 1 y 7 días (' + (colados.join(' ') || 'ninguno colado') + ')');
+  await campo.fill(' 9600 ');
+  await campo.press('Enter');
+  es((await lsCorte()).mano && (await lsCorte()).mano.s === 9600 && /Según el plazo que escribiste/.test(await x.page.locator('.corte-sp').innerText()), 'la tecla Enter también guarda el plazo');
+  // se puede corregir: mientras se escribe, la pantalla no se repinta; al soltar la casilla, sí
+  await campo.fill('90');
+  await x.page.evaluate(() => { window.SS.estado.candado = true; window.SS.pinta(); });
+  es(await x.page.evaluate(() => !!document.activeElement && document.activeElement.id === 'retry-mano' && document.activeElement.value === '90') && await x.page.locator('.candado-panel').count() === 0, 'si la pantalla se repinta mientras se escribe, no se pierde lo escrito');
+  await x.page.keyboard.type('00');
+  await x.page.evaluate(() => document.activeElement.blur());
+  await x.page.waitForTimeout(600);
+  es(await x.page.locator('.candado-panel').count() === 1 && await campo.inputValue() === '9000', 'al soltar la casilla se hace la repintada pendiente, con lo escrito');
+  // en el iPhone, tocar un botón no le quita el foco a un campo: la pantalla tiene que cambiar igual
+  await campo.focus();
+  await x.page.evaluate(() => Array.from(document.querySelectorAll('.pestana')).find(b => /Copia/.test(b.textContent)).click());
+  es(/Copia completa de Spotify/.test(await cuerpo(x.page)) && /Copia/.test(await x.page.locator('.pestana.activa').innerText()), 'un botón pulsado con el foco aún en la casilla cambia la pantalla');
+  // los demás botones tampoco envían nada durante el corte
+  g = x.mundo.spGets;
+  await boton(x.page, 'Hacer una copia ahora').click();
+  await x.page.waitForFunction(() => !window.SS.estado.tarea);
+  await pestana(x.page, 'Sin repartir');
+  await boton(x.page, 'Leer Spotify y calcular').click();
+  await x.page.waitForFunction(() => !window.SS.estado.tarea);
+  es(x.mundo.spGets === g && !Array.from(x.mundo.archivos.keys()).some(k => k.startsWith('/copias/')), 'durante el corte, ni «Hacer una copia» ni «Leer Spotify y calcular» envían nada a Spotify');
+  await pestana(x.page, 'rekordbox a Spotify');
+  es(await campo.inputValue() === '9000', 'y lo escrito en la casilla sigue ahí al volver');
+  await boton(x.page, 'Guardar plazo').click();
+  const cm = await x.page.evaluate(() => JSON.parse(localStorage.getItem('ss.corte')));
+  es(cm.mano && cm.mano.s === 9000 && cm.hasta === cm.t + 9000000 && cm.mano.hasta === cm.hasta, 'el plazo a mano cuenta desde la hora del rechazo, no desde que se escribe, y se puede corregir (9600 → 9000)');
+  es(cm.e > 0, 'cada vez que se apunta el corte queda la hora en que se escribió');
+  const hora = await x.page.evaluate(v => { const d = new Date(v), z = n => String(n).padStart(2, '0'); return z(d.getHours()) + ':' + z(d.getMinutes()); }, cm.hasta);
+  t = await x.page.locator('.corte-sp').innerText();
+  es(t.indexOf('Según el plazo que escribiste, Spotify vuelve a las ' + hora) >= 0 && t.indexOf('Hasta las ' + hora) >= 0 && /Guardado: Spotify vuelve a las /.test(await cuerpo(x.page)), 'y enseña la hora real (' + hora + ')');
+  await x.page.waitForTimeout(1700);
+  const memC = JSON.parse(x.mundo.archivos.get('/memoria/memoria.json').texto).ajustes.corteSp.v;
+  es(memC.mano && memC.mano.s === 9000 && memC.hasta === cm.hasta, 'el plazo a mano queda en la memoria común, para el otro dispositivo');
+  g = x.mundo.spGets;
+  await boton(x.page, 'Simular').click();
+  await x.page.waitForFunction(() => !window.SS.estado.tarea);
+  es(x.mundo.spGets === g && /No se ha enviado nada a Spotify/.test(await cuerpo(x.page)), 'con el plazo a mano, los botones siguen sin enviar nada');
+  await boton(x.page, 'Probar ahora (gasta 1 petición)').click();
+  await x.page.waitForFunction(() => !window.SS.estado.tarea);
+  const cm2 = await x.page.evaluate(() => JSON.parse(localStorage.getItem('ss.corte')));
+  es(x.mundo.sp429 === 3 && cm2.t > cm.t && cm2.hasta === cm.hasta && cm2.mano && cm2.mano.s === 9000, 'un rechazo nuevo no acorta el plazo escrito a mano');
+  es(await boton(x.page, 'Probar ahora (gasta 1 petición)').count() === 1, '«Probar ahora» sigue a la vista aunque haya plazo a mano');
+  x.mundo.opc.corte = null;
+  await boton(x.page, 'Probar ahora (gasta 1 petición)').click();
+  await x.page.waitForFunction(() => /Spotify vuelve a responder a la llamada que había rechazado \(\/me\/playlists\)/.test(document.body.innerText) && !window.SS.estado.tarea);
+  es(await x.page.locator('.corte-sp').count() === 0 && (await x.page.evaluate(() => JSON.parse(localStorage.getItem('ss.corte')).fin)) > 0, 'cuando la llamada rechazada responde, el corte se da por terminado');
+  await pestana(x.page, 'Diagnóstico');
+  es(/en \/me\/playlists; motivo: QUOTA_EXCEEDED; plazo: no legible; a mano: Retry-After 9000 s \(escrito el [^)]+\), vuelve el [^;]+; volvió a responder el /.test(await x.page.locator('#diag').inputValue()), 'el diagnóstico lleva el plazo escrito a mano y cuándo volvió');
+  // un corte nuevo no hereda el plazo de uno que ya terminó
+  x.mundo.opc.corte = { desde: 1, cuota: true, rutas: ['/me/playlists'] };
+  await pestana(x.page, 'rekordbox a Spotify');
+  await boton(x.page, 'Simular').click();
+  await x.page.waitForSelector('.corte-sp');
+  await x.page.waitForFunction(() => !window.SS.estado.tarea);
+  const cm3 = await lsCorte();
+  es(!cm3.mano && !cm3.fin && Math.abs(cm3.hasta - cm3.t - 3600000) < 5 && !/Según el plazo que escribiste/.test(await x.page.locator('.corte-sp').innerText()), 'un corte nuevo no hereda el plazo a mano de uno que ya terminó');
+  // en la consola solo pueden estar los rechazos de Spotify que la prueba provoca; nada de fallos al pintar
+  const raros = x.consola.filter(m => !/Límite de peticiones de Spotify/.test(m));
+  es(raros.length === 0 && !/Error al pintar/.test(await cuerpo(x.page)), 'corte parcial sin errores propios en la consola: ' + raros.slice(0, 3).join(' | '));
+  await x.ctx.close();
+
+  // la casilla del plazo: pulsación lenta, plazo que ya ha pasado, aviso caducado y recarga
+  x = await nuevo({ corte: { desde: 1, cuota: true, rutas: ['/me/playlists'] } });
+  await conecta(x.page, 'Dropbox'); await conecta(x.page, 'Spotify'); await eligeXml(x.page);
+  const lsC = () => x.page.evaluate(() => JSON.parse(localStorage.getItem('ss.corte')));
+  const corta = async () => { await pestana(x.page, 'rekordbox a Spotify'); await boton(x.page, 'Simular').click(); await x.page.waitForSelector('.corte-sp'); await x.page.waitForFunction(() => !window.SS.estado.tarea); };
+  await corta();
+  const casilla = x.page.locator('#retry-mano');
+  await casilla.fill('9000');
+  await x.page.evaluate(() => window.SS.pinta()); // queda una repintada pendiente
+  const caja = await boton(x.page, 'Guardar plazo').boundingBox();
+  await x.page.mouse.move(caja.x + caja.width / 2, caja.y + caja.height / 2);
+  await x.page.mouse.down();
+  await x.page.waitForTimeout(700);
+  await x.page.mouse.up();
+  await x.page.waitForTimeout(300);
+  es((await lsC()).mano && (await lsC()).mano.s === 9000, 'una pulsación lenta sobre «Guardar plazo» con una repintada pendiente no se pierde');
+  // un plazo que ya habría pasado (p. ej. una errata) no suelta los botones sin preguntar
+  await x.page.waitForTimeout(1100);
+  await casilla.fill('1');
+  await boton(x.page, 'Guardar plazo').click();
+  t = await x.page.locator('.corte-sp').innerText();
+  es(/Con 1 s, Spotify habría vuelto a [^,]+, que ya ha pasado\. Si el número está bien, los botones volverán a enviar ya\. ¿Es correcto\?/.test(t) && (await lsC()).mano.s === 9000, 'un plazo que ya habría pasado no se guarda sin preguntar');
+  g = x.mundo.spGets;
+  await boton(x.page, 'Corregir').click();
+  es(await casilla.inputValue() === '1' && await boton(x.page, 'Sí, es correcto').count() === 0 && (await lsC()).mano.s === 9000, '«Corregir» vuelve a la casilla con lo escrito, sin guardar nada');
+  await boton(x.page, 'Guardar plazo').click();
+  await boton(x.page, 'Sí, es correcto').click();
+  es((await lsC()).mano.s === 1 && await x.page.locator('.corte-sp').count() === 0 && /los botones ya vuelven a enviar/.test(await cuerpo(x.page)) && x.mundo.spGets === g, 'confirmado, se guarda, lo dice y la app no envía nada por su cuenta');
+  await corta();
+  es(x.mundo.spGets === g + 1 && !(await lsC()).mano, 'después los botones vuelven a enviar; y un plazo ya vencido no pasa al rechazo siguiente');
+  // el aviso sigue en pantalla pero la espera de la app ya terminó: el plazo aún se puede escribir
+  await x.page.evaluate(() => { const c = JSON.parse(localStorage.getItem('ss.corte')); c.hasta = Date.now() - 1; localStorage.setItem('ss.corte', JSON.stringify(c)); });
+  await casilla.fill('9000');
+  await boton(x.page, 'Guardar plazo').click();
+  const cV = await lsC();
+  es(cV.mano && cV.mano.s === 9000 && cV.hasta === cV.t + 9000000 && /Según el plazo que escribiste/.test(await x.page.locator('.corte-sp').innerText()), 'con la espera de la app ya vencida y el aviso aún en pantalla, el plazo se guarda y vuelve a frenar');
+  // si ese corte ya terminó, lo dice en vez de no hacer nada
+  await x.page.evaluate(() => { const c = JSON.parse(localStorage.getItem('ss.corte')); c.fin = Date.now(); c.e = Date.now(); localStorage.setItem('ss.corte', JSON.stringify(c)); });
+  await casilla.fill('9000');
+  await boton(x.page, 'Guardar plazo').click();
+  es(/Ya no hay ningún corte de Spotify pendiente/.test(await cuerpo(x.page)) && await x.page.locator('.corte-sp').count() === 0, 'y si el corte ya terminó, «Guardar plazo» lo dice y quita el aviso');
+  // recargar justo después de guardar: el plazo no se queda solo en este dispositivo
+  await corta();
+  await x.page.waitForTimeout(1800); // que suba el corte nuevo
+  await casilla.fill('9000');
+  await boton(x.page, 'Guardar plazo').click();
+  await x.page.reload();
+  const enMem = () => JSON.parse(x.mundo.archivos.get('/memoria/memoria.json').texto).ajustes.corteSp.v;
+  const antesDeSubir = !!enMem().mano;
+  await x.page.waitForFunction(() => !!(window.SS && window.SS.estado.memLista), null, { timeout: 15000 });
+  await x.page.waitForTimeout(2500);
+  es(!antesDeSubir && enMem().mano && enMem().mano.s === 9000 && enMem().t === (await lsC()).t, 'si se recarga antes de que el plazo suba a Dropbox, se sube al volver a cargar');
+  const raros2 = x.consola.filter(m => !/Límite de peticiones de Spotify/.test(m));
+  es(raros2.length === 0 && !/Error al pintar/.test(await cuerpo(x.page)), 'la casilla, sin errores propios en la consola: ' + raros2.slice(0, 3).join(' | '));
+  await x.ctx.close();
+
+  // un corte guardado sin la llamada (datos ajenos): se prueba la lista de playlists y esa prueba lo cierra
+  x = await nuevo();
+  await x.page.evaluate(() => localStorage.setItem('ss.corte', JSON.stringify({ t: Date.now() - 1000, cuota: true, motivo: 'QUOTA_EXCEEDED', espera: null, hasta: Date.now() + 3600000 })));
+  await conecta(x.page, 'Dropbox'); await conecta(x.page, 'Spotify');
+  await x.page.waitForSelector('.corte-sp');
+  es(await x.page.locator('.aviso.error').count() === 0 && x.mundo.spGets === 0, 'conectar Spotify durante un corte no pide nada ni deja un aviso de error');
+  t = await x.page.locator('.corte-sp').innerText();
+  es(/Prueba la misma llamada que rechazó Spotify \(\/me\/playlists\)/.test(t) && !/undefined/.test(await cuerpo(x.page)) && !/undefined/.test(await x.page.evaluate(() => window.SS.diagnostico())), 'un corte sin la llamada apuntada no enseña «undefined»');
+  await boton(x.page, 'Probar ahora (gasta 1 petición)').click();
+  await x.page.waitForFunction(() => !window.SS.estado.tarea);
+  const pSin = x.mundo.peticiones.filter(p => p.host === 'api.spotify.com').slice(-1)[0];
+  es(pSin.ruta === '/v1/me/playlists' && pSin.q === '?limit=1' && (await x.page.evaluate(() => JSON.parse(localStorage.getItem('ss.corte')).fin)) > 0 && await x.page.locator('.corte-sp').count() === 0, 'y «Probar ahora» lo cierra aunque no se sepa qué llamada era');
+  await x.ctx.close();
+
+  // el mismo corte visto desde dos dispositivos: el plazo a mano y el «fin» del otro se ven aquí
+  x = await nuevo();
+  const T = Date.now() - 600000;
+  const base = { t: T, cuota: true, motivo: 'QUOTA_EXCEEDED', espera: null, hasta: T + 3600000, ruta: '/me/playlists', e: T };
+  const mano = { s: 9000, t: T + 60000, hasta: T + 9000000 };
+  const memCon = v => JSON.stringify({ v: 1, mapa: {}, soundeo: {}, decisiones: {}, ocultas: {}, pares: {}, ajustes: { corteSp: { v, t: v.e } }, uso: {} });
+  const ponLs = c => x.page.evaluate(v => localStorage.setItem('ss.corte', JSON.stringify(v)), c);
+  await ponLs(base);
+  x.mundo.pon('/memoria/memoria.json', memCon(Object.assign({}, base, { hasta: mano.hasta, mano, e: T + 60000 })));
+  await conecta(x.page, 'Dropbox'); await conecta(x.page, 'Spotify');
+  await x.page.waitForSelector('.corte-sp');
+  // el aviso sale primero con lo de este navegador; lo de la memoria común llega al cargarla
+  await x.page.waitForFunction(() => window.SS.estado.memLista && /Según el plazo que escribiste/.test((document.querySelector('.corte-sp') || {}).innerText || ''), null, { timeout: 15000 }).catch(() => {});
+  es(/Según el plazo que escribiste/.test(await x.page.locator('.corte-sp').innerText()) && x.mundo.spGets === 0, 'el plazo escrito en el otro dispositivo sobre el mismo corte se ve aquí');
+  x.mundo.pon('/memoria/memoria.json', memCon(Object.assign({}, base, { hasta: mano.hasta, mano, fin: T + 120000, e: T + 120000 })));
+  await x.page.reload();
+  await x.page.waitForFunction(() => !!(window.SS && window.SS.estado.memLista), null, { timeout: 15000 });
+  es(await x.page.locator('.corte-sp').count() === 0, 'y si el otro dispositivo vio que Spotify había vuelto, aquí tampoco frena');
+  await ponLs(Object.assign({}, base, { fin: T + 120000, e: T + 120000 }));
+  x.mundo.pon('/memoria/memoria.json', memCon(Object.assign({}, base, { hasta: mano.hasta, mano, e: T + 180000 })));
+  await x.page.reload();
+  await x.page.waitForFunction(() => !!(window.SS && window.SS.estado.memLista), null, { timeout: 15000 });
+  es(await x.page.locator('.corte-sp').count() === 0 && /volvió a responder el /.test(await x.page.evaluate(() => window.SS.diagnostico())), 'un «fin» apuntado aquí no se pierde aunque el otro escribiera después sobre el mismo corte');
+  // con el plazo ya pasado, una llamada que responde solo cierra el corte si es la misma ruta
+  const ya = await x.page.evaluate(() => Date.now());
+  await ponLs({ t: ya - 300000, cuota: true, motivo: 'QUOTA_EXCEEDED', espera: null, hasta: ya - 60000, ruta: '/playlists/otra/items', e: ya - 300000 });
+  es(/en \/playlists\/otra\/items; [^\n]*; la espera terminó a las \d\d:\d\d; todavía no se ha visto responder a esa llamada/.test(await x.page.evaluate(() => window.SS.diagnostico())), 'el diagnóstico de un corte con la espera vencida no habla en presente');
+  await x.page.evaluate(() => window.SS.spotify('GET', '/me'));
+  await x.page.evaluate(() => window.SS.spotify('GET', '/me/playlists?limit=1'));
+  es(!(await x.page.evaluate(() => JSON.parse(localStorage.getItem('ss.corte')).fin)), 'que respondan el perfil o la lista de playlists no termina un corte de otra llamada');
+  await x.page.evaluate(id => window.SS.spotify('GET', '/playlists/' + id + '/items?limit=1'), D.playlists.find(p => p.owner.id === D.YO.id).id);
+  es((await x.page.evaluate(() => JSON.parse(localStorage.getItem('ss.corte')).fin)) > 0, 'sí lo termina que responda esa misma llamada (aunque sea de otra playlist)');
+  // las reglas para unir el corte de este navegador con el de la memoria común, una a una
+  const U = await x.page.evaluate(() => {
+    const u = window.SS.uneCortes, t = 1000000, m = { s: 50, t: t + 5, hasta: t + 50000 }, r = {};
+    const A = { t, hasta: t + 10000, ruta: '/me/playlists', e: t }, con = o => Object.assign({}, A, o);
+    r['sin nada o con uno solo'] = u(null, null) === null && u(A, null) === A && u(null, A) === A && u({}, A) === A;
+    r['de dos rechazos manda el más reciente'] = u(A, { t: t + 1, hasta: t + 20000 }).t === t + 1 && u({ t: t + 1, hasta: t + 20000 }, A).t === t + 1;
+    const h1 = u(con({ mano: m, hasta: m.hasta }), { t: t + 1, hasta: t + 20000, e: t + 1 });
+    r['un rechazo nuevo conserva el plazo a mano que acaba más tarde'] = h1.t === t + 1 && h1.hasta === m.hasta && h1.mano.s === 50;
+    const h2 = u(con({ mano: m, hasta: m.hasta, fin: t + 9 }), { t: t + 1, hasta: t + 20000 });
+    r['no lo conserva si aquel corte ya terminó'] = !h2.mano && h2.hasta === t + 20000;
+    const h3 = u(con({ mano: m, hasta: m.hasta }), { t: t + 1, hasta: t + 90000 });
+    r['ni si el plazo a mano acaba antes'] = !h3.mano && h3.hasta === t + 90000;
+    const h4 = u(con({ mano: m, hasta: m.hasta }), { t: t + 1, hasta: t + 20000, fin: t + 30 });
+    r['ni si el rechazo nuevo ya terminó'] = !h4.mano && h4.fin === t + 30;
+    r['mismo rechazo: gana lo último escrito'] = !!u(con({ e: t + 2, mano: m, hasta: m.hasta }), con({ e: t + 1 })).mano && !!u(con({ e: t + 1 }), con({ e: t + 2, mano: m, hasta: m.hasta })).mano;
+    r['mismo rechazo: un fin no se pierde'] = u(con({ e: t + 2 }), con({ e: t + 1, fin: t + 7 })).fin === t + 7;
+    const h7 = u(A, con({ mano: m, hasta: m.hasta }));
+    r['mismo rechazo escrito a la vez: el plazo no se pierde'] = !!h7.mano && h7.hasta === m.hasta;
+    const sinE = { t, hasta: t + 10000 };
+    r['cortes de la v0.1.5 (sin hora de escritura)'] = u(sinE, Object.assign({}, sinE, { fin: t + 3 })).fin === t + 3 && u(sinE, sinE) === sinE;
+    const m2 = { s: 20, t: t + 8, hasta: t + 20000 };
+    const h8 = u(con({ e: t + 5, mano: m, hasta: m.hasta }), con({ e: t + 8, mano: m2, hasta: m2.hasta }));
+    r['un plazo corregido a uno más corto se respeta'] = h8.mano.s === 20 && h8.hasta === m2.hasta;
+    return r;
+  });
+  for (const k of Object.keys(U)) es(U[k] === true, 'unir cortes: ' + k);
+  await x.ctx.close();
+
+  // un rechazo nuevo aquí no borra el plazo que se escribió en el otro dispositivo y que aquí aún no se había bajado
+  x = await nuevo({ corte: { desde: 1, cuota: true, rutas: ['/me/playlists'] } });
+  const T1 = Date.now() - 60000;
+  const c1 = { t: T1, cuota: true, motivo: 'QUOTA_EXCEEDED', espera: null, hasta: T1 + 3600000, ruta: '/me/playlists', e: T1 };
+  const mOtro = { s: 9000, t: T1 + 30000, hasta: T1 + 9000000 };
+  x.mundo.pon('/memoria/memoria.json', memCon(c1));
+  await conecta(x.page, 'Dropbox'); await conecta(x.page, 'Spotify');
+  await x.page.waitForFunction(() => window.SS.estado.memLista && !!document.querySelector('.corte-sp'), null, { timeout: 15000 });
+  x.mundo.pon('/memoria/memoria.json', memCon(Object.assign({}, c1, { hasta: mOtro.hasta, mano: mOtro, e: T1 + 30000 }))); // el otro dispositivo escribe el plazo
+  await boton(x.page, 'Probar ahora (gasta 1 petición)').click();
+  await x.page.waitForFunction(() => !window.SS.estado.tarea);
+  await x.page.waitForFunction(() => /Según el plazo que escribiste/.test((document.querySelector('.corte-sp') || {}).innerText || ''), null, { timeout: 8000 }).catch(() => {});
+  const cU = JSON.parse(x.mundo.archivos.get('/memoria/memoria.json').texto).ajustes.corteSp.v;
+  es(x.mundo.sp429 === 1 && cU.t > T1 && !!cU.mano && cU.mano.s === 9000 && cU.hasta === mOtro.hasta, 'un rechazo nuevo en este dispositivo no acorta en la memoria común el plazo escrito en el otro (' + JSON.stringify({ nuevo: cU.t > T1, mano: cU.mano && cU.mano.s, min: Math.round((cU.hasta - Date.now()) / 60000) }) + ')');
+  es(/Según el plazo que escribiste/.test(await x.page.locator('.corte-sp').innerText()), 'y este dispositivo pasa a verlo sin recargar');
   await x.ctx.close();
 
   // si Spotify dice el plazo y el navegador lo puede leer, se enseña y se respeta
@@ -529,10 +779,42 @@ async function casos() {
   es(x.mundo.archivos.has('/memoria/cache-biblioteca.json') && !JSON.parse(x.mundo.archivos.get('/memoria/cache-biblioteca.json').texto).semilla, 'a partir de ahí queda guardado como lectura normal');
   // y siempre se puede releer todo a propósito
   await pestana(x.page, 'Diagnóstico');
+  g = x.mundo.spGets;
   await boton(x.page, 'Releer todo Spotify').click();
+  es(x.mundo.spGets === g && !(await x.page.evaluate(() => window.SS.estado.tarea)) && /¿Releer todo Spotify\? Vuelve a pedir todas tus playlists y likes: unas \d+ peticiones/.test(await cuerpo(x.page)), '«Releer todo Spotify» pide confirmación y dice cuánto gasta, sin enviar nada');
+  await boton(x.page, 'Cancelar').click();
+  await x.page.waitForTimeout(600);
+  es(x.mundo.spGets === g && await boton(x.page, 'Sí, releer todo').count() === 0 && await boton(x.page, 'Releer todo Spotify').count() === 1, 'y se puede cancelar: no se envía nada');
+  await boton(x.page, 'Releer todo Spotify').click();
+  await pestana(x.page, 'Copia'); await pestana(x.page, 'Diagnóstico');
+  es(await boton(x.page, 'Sí, releer todo').count() === 0 && x.mundo.spGets === g, 'la confirmación no se queda abierta al cambiar de pestaña');
+  await boton(x.page, 'Releer todo Spotify').click();
+  await boton(x.page, 'Sí, releer todo').click();
   await x.page.waitForFunction(() => !window.SS.estado.tarea && window.SS.estado.lib && window.SS.estado.lib.lectura.releidas > 0, null, { timeout: 60000 });
   const lecT = await x.page.evaluate(() => window.SS.estado.lib.lectura);
   es(lecT.releidas === 10 && lecT.iguales === 0 && lecT.likes === 'releídos' && (await foto1()) === entera, '«Releer todo Spotify» no se fía de lo guardado y da lo mismo: ' + JSON.stringify(lecT));
+  es(/\n  playlists releídas: todas \(10\)\n/.test(await x.page.locator('#diag').inputValue()), 'y el diagnóstico dice que se han releído todas');
+  // una relectura completa que no termina no deja guardado menos de lo que había
+  const guardado = () => { const j = JSON.parse(x.mundo.archivos.get('/memoria/cache-biblioteca.json').texto); return { pls: Object.keys(j.pls).length, likes: j.likes ? j.likes.items.length : null, rev: x.mundo.archivos.get('/memoria/cache-biblioteca.json').rev }; };
+  const relee = async () => { await boton(x.page, 'Releer todo Spotify').click(); await boton(x.page, 'Sí, releer todo').click(); await x.page.waitForSelector('.corte-sp'); await x.page.waitForFunction(() => !window.SS.estado.tarea); };
+  const quitaCorte = async () => { x.mundo.opc.corte = null; await boton(x.page, 'Probar ahora (gasta 1 petición)').click(); await x.page.waitForFunction(() => !window.SS.estado.tarea && !document.querySelector('.corte-sp')); };
+  const g0 = guardado();
+  es(g0.pls === 10 && g0.likes === 75, 'lo leído guardado: 10 playlists y 75 likes');
+  x.mundo.opc.corte = { desde: x.mundo.spGets + 1, cuota: true }; // Spotify corta en la primera petición de la relectura
+  await relee();
+  let g1 = guardado();
+  es(g1.pls === 10 && g1.likes === 75 && g1.rev === g0.rev, 'si «Releer todo» se corta sin haber leído nada, lo guardado no se toca (' + JSON.stringify(g1) + ')');
+  t = await cuerpo(x.page);
+  es(await boton(x.page, 'Releer todo Spotify').isDisabled() && /Mientras dura el corte de Spotify no se puede releer/.test(t) && await x.page.locator('.corte-sp').count() === 1, 'durante un corte, Diagnóstico enseña el aviso y «Releer todo Spotify» está apagado');
+  await quitaCorte();
+  x.mundo.opc.corte = { desde: x.mundo.spGets + 6, cuota: true }; // ahora corta a media relectura
+  await relee();
+  g1 = guardado();
+  es(g1.pls === 10 && g1.likes === 75, 'si se corta a media relectura, se conserva lo que había y lo releído va encima (' + JSON.stringify(g1) + ')');
+  await quitaCorte();
+  await simula(x.page, 'Simular leyendo Spotify de nuevo');
+  const lecD = await x.page.evaluate(() => window.SS.estado.lib.lectura);
+  es(lecD.peticiones === 2 && lecD.releidas === 0 && lecD.iguales === 10 && lecD.likes === 'sin cambios' && (await foto1()) === entera, 'y la lectura normal siguiente sigue costando 2 peticiones y da lo mismo: ' + JSON.stringify(lecD));
   await x.ctx.close();
 
   // el otro dispositivo se entera del corte por la memoria común y no gasta ni una petición
@@ -544,6 +826,7 @@ async function casos() {
   await conecta(x.page, 'Dropbox'); await conecta(x.page, 'Spotify');
   await x.page.waitForSelector('.corte-sp');
   es(x.mundo.spGets === 0 && /se ha agotado la cuota del modo desarrollo/.test(await x.page.locator('.corte-sp').innerText()), 'un corte apuntado por otro dispositivo se respeta también aquí, sin gastar peticiones');
+  es(await x.page.locator('.aviso.error').count() === 0, 'y conectar Spotify con ese corte activo no deja un aviso de error');
   await pestana(x.page, 'Diagnóstico');
   es(/Peticiones a Spotify hoy: 500 entre todos tus dispositivos \(este: 0\)/.test(await x.page.locator('#diag').inputValue()), 'y el contador del día suma lo de todos los dispositivos');
   await x.ctx.close();

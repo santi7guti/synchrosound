@@ -19,14 +19,16 @@ class Mundo {
   constructor(opc) {
     this.opc = Object.assign({
       scopeSpotify: null,        // null = lo que se pidió
-      // corte: {desde, cuota, retry, expone}: a partir de la petición nº «desde» a la API, Spotify responde 429.
-      //   cuota: el cuerpo lleva reason QUOTA_EXCEEDED; retry: segundos de Retry-After; expone: el navegador puede leerla.
+      // corte: {desde, cuota, retry, expone, rutas}: a partir de la petición nº «desde» a la API, Spotify responde 429.
+      //   cuota: el cuerpo lleva reason QUOTA_EXCEEDED; retry: segundos de Retry-After; expone: el navegador puede leerla;
+      //   rutas: si se da, solo se cortan esas rutas (p. ej. ['/me/playlists']; con '*' al final, las que empiezan así),
+      //   porque Spotify corta por grupos de llamadas: el perfil puede responder y las playlists no.
       corte: null,
       maxPagina: 30,             // Spotify da como mucho estas por página aunque se pidan más
       prohibido: false,          // todas las lecturas de Spotify dan 403 (cuenta no dada de alta)
       xml: D.xml(),
     }, opc || {});
-    this.peticiones = [];        // {host, metodo, ruta}
+    this.peticiones = [];        // {host, metodo, ruta, q}
     this.fuera = [];             // peticiones a sitios no previstos
     this.spotifyNoGet = [];
     this.busquedas = 0;
@@ -61,7 +63,7 @@ class Mundo {
   }
   async atiende(ruta) {
     const req = ruta.request(), u = new URL(req.url()), metodo = req.method();
-    this.peticiones.push({ host: u.host, metodo, ruta: u.pathname });
+    this.peticiones.push({ host: u.host, metodo, ruta: u.pathname, q: u.search });
     const json = (o, estado, cab) => ruta.fulfill({ status: estado || 200, headers: Object.assign({ 'content-type': 'application/json' }, CORS, cab || {}), body: JSON.stringify(o) });
 
     if (req.url().startsWith(SITIO)) {
@@ -107,8 +109,9 @@ class Mundo {
       const tok = (req.headers().authorization || '').replace(/^Bearer /, '');
       if (!this.tokens.sp.has(tok)) return json({ error: { status: 401, message: 'The access token expired' } }, 401);
       this.spGets++;
-      const ct = this.opc.corte;
-      if (ct && this.spGets >= ct.desde) {
+      const ct = this.opc.corte, ruta_ = u.pathname.replace(/^\/v1/, '');
+      const cortada = ct && (!ct.rutas || ct.rutas.some(r => (r.slice(-1) === '*' ? ruta_.indexOf(r.slice(0, -1)) === 0 : ruta_ === r)));
+      if (cortada && this.spGets >= ct.desde) {
         this.sp429++;
         const cuerpo = { error: { status: 429, message: ct.cuota ? 'Too many requests' : 'API rate limit exceeded' } };
         if (ct.cuota) cuerpo.error.reason = 'QUOTA_EXCEEDED';
@@ -117,7 +120,6 @@ class Mundo {
         return ruta.fulfill({ status: 429, headers: cab, body: JSON.stringify(cuerpo) });
       }
       if (this.opc.prohibido) return json({ error: { status: 403, message: 'User not registered in the Developer Dashboard' } }, 403);
-      const ruta_ = u.pathname.replace(/^\/v1/, '');
       const lim = Math.min(parseInt(u.searchParams.get('limit') || '20', 10), this.opc.maxPagina), off = parseInt(u.searchParams.get('offset') || '0', 10);
       const pagina = (todos, f) => ({ href: req.url(), items: todos.slice(off, off + lim).map(f), limit: lim, offset: off, total: todos.length, next: off + lim < todos.length ? 'https://api.spotify.com/v1/siguiente' : null, previous: null });
       if (ruta_ === '/me') return json(D.YO);
@@ -141,6 +143,7 @@ class Mundo {
       if (ruta_ === '/search') {
         this.busquedas++;
         if (parseInt(u.searchParams.get('limit') || '5', 10) > 10) return json({ error: { status: 400, message: 'Invalid limit' } }, 400);
+        if (!(u.searchParams.get('q') || '').trim()) return json({ error: { status: 400, message: 'No search query' } }, 400);
         const qt = C.norm(u.searchParams.get('q') || '').split(' ').filter(Boolean);
         const res = D.catalogo.filter(t => !t.soloConExtended || qt.indexOf('extended') >= 0).map(t => {
           const texto = ' ' + C.norm(t.name + ' ' + t.artists.map(a => a.name).join(' ')) + ' ';

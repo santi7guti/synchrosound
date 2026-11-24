@@ -105,10 +105,15 @@ div.mal { color: var(--no); }
 .btn.mini { padding: 7px 11px; font-size: 15px; }
 .btn:disabled { opacity: 0.45; cursor: default; }
 .campo { display: block; margin: 0 0 12px; }
-select, input[type="date"] {
+select, input[type="date"], input[type="text"] {
   background: var(--panel); border: 1px solid var(--linea); border-radius: 4px; padding: 8px 10px;
   max-width: 100%; font-size: 16px;
 }
+.confirma .acciones { margin: 10px 0 0; }
+.mano { margin-top: 12px; color: var(--tinta); }
+.mano-conf .acciones { margin: 10px 0 8px; }
+.mano label { display: block; margin: 0 0 6px; font-weight: 600; }
+.mano input[type="text"] { width: 11ch; background: var(--fondo); }
 
 /* listas */
 .lista { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--linea); }
