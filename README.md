@@ -3,7 +3,7 @@
 Web estática (GitHub Pages, sin servidor) para llevar a Spotify lo que hay en rekordbox.
 Se abre en <https://santi7guti.github.io/synchrosound/> desde el PC o el iPhone.
 
-**Estado: fase 2, etapa 1 (v0.3.0).** Esta versión lee y simula como las anteriores y, además, puede **añadir** canciones a las playlists propias `NS - …` y `OG - …` del mapa: las que se marcan y se confirman a mano, y después de guardar una copia. No quita, no reordena, no reemplaza y no crea nada.
+**Estado: v0.3.0 (fase 2: solo añadir).** Esta versión lee y simula como las anteriores y, además, puede **añadir** canciones a las playlists propias `NS - …` y `OG - …` del mapa: las que se marcan y se confirman a mano, y después de guardar una copia. No quita, no reordena, no reemplaza y no crea nada. Añadir está probado con una biblioteca real desde un PC, en playlists públicas y privadas; escribir desde el iPhone y los casos de fallo solo están probados con los servicios simulados de `test/`.
 
 ## Qué hace esta versión
 
