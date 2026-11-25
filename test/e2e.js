@@ -1,7 +1,7 @@
 /* Pruebas de extremo a extremo con Spotify y Dropbox simulados (ver falsos.js).
    Uso:  NODE_PATH=<carpeta con playwright> CHROME=/ruta/a/chrome node test/e2e.js
-   Comprueba, entre otras cosas, que a Spotify no sale nada que no sea GET salvo una única llamada:
-   la de la prueba de escritura (un POST con una canción a la playlist «PRUEBA PEGAR»), y solo tras confirmarla. */
+   Comprueba, entre otras cosas, que a Spotify no sale nada que no sea GET salvo las escrituras de la sincronización:
+   POST /playlists/{id}/items a playlists «NS - …» y «OG - …» del mapa, las marcadas, y solo tras confirmarlo. */
 'use strict';
 const { chromium, devices } = require('playwright');
 const path = require('path');
@@ -10,7 +10,8 @@ const { Mundo, SITIO } = require('./falsos.js');
 const D = require('./datos.js');
 
 let ok = 0, mal = 0;
-function es(cond, texto) { if (cond) ok++; else { mal++; console.log('  FALLA: ' + texto); } }
+// PRIMERA=1 corta en el primer fallo (para comprobar deprisa que un cambio a propósito en el código se detecta).
+function es(cond, texto) { if (cond) ok++; else { mal++; console.log('  FALLA: ' + texto); if (process.env.PRIMERA) { console.log('Extremo a extremo: parado en el primer fallo, tras ' + ok + ' comprobaciones bien.'); process.exit(1); } } }
 const SALIDA = process.env.SALIDA || '';
 const LECTURA = 'playlist-read-private playlist-read-collaborative user-library-read';
 const PEDIDOS = LECTURA + ' playlist-modify-public playlist-modify-private';
@@ -61,7 +62,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
 
   // --- arranque ---
   let t = await cuerpo(page);
-  es(/v0\.2\.0/.test(t), 'se ve el número de versión');
+  es(/v0\.3\.0/.test(t), 'se ve el número de versión');
   es(/Solo lectura/.test(t), 'se ve el indicador de solo lectura');
   es(/Sin conectar en este dispositivo/.test(t), 'empieza sin conectar');
   await foto(page, 'cuentas-vacio' + sufijo);
@@ -80,7 +81,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   await page.waitForFunction(() => /como Prueba/.test(document.body.innerText) && /como Cuenta de Prueba/.test(document.body.innerText), null, { timeout: 10000 });
   t = await cuerpo(page);
   es(t.indexOf('Permisos concedidos: ' + PEDIDOS + '.') >= 0, 'enseña los permisos que Spotify ha concedido');
-  es(/Solo prueba/.test(await page.locator('.candado').innerText()), 'con el permiso de escritura concedido el indicador deja de decir «Solo lectura»');
+  es(/Solo añadir/.test(await page.locator('.candado').innerText()), 'con el permiso de escritura concedido el indicador deja de decir «Solo lectura»');
   es(t.indexOf('no-debe-salir@ejemplo.test') < 0, 'no enseña el correo de Dropbox');
 
   await eligeXml(page);
@@ -196,7 +197,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   // --- dudosas: Añadir y No es ---
   await page.locator('.filtro.cat-duda').click();
   await foto(page, 'dudosas' + sufijo);
-  es(/En esta fase «Añadir» solo guarda tu respuesta/.test(await cuerpo(page)), 'explica que «Añadir» no escribe en esta fase');
+  es(/«Añadir» guarda tu respuesta y pasa la canción a «Se añadirían»; no cambia nada en Spotify hasta que sincronices/.test(await cuerpo(page)), 'explica que «Añadir» no escribe: solo guarda la respuesta');
   await page.locator('.fila.cat-duda', { hasText: 'Midnigth Train' }).getByRole('button', { name: 'Añadir', exact: true }).click();
   await page.locator('.fila.cat-duda', { hasText: 'Cumbia del Túnel' }).getByRole('button', { name: 'No es', exact: true }).click();
   n = await numeros(page);
@@ -327,8 +328,8 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   // --- diagnóstico ---
   await pestana(page, 'Diagnóstico');
   const diag = await page.locator('#diag').inputValue();
-  es(/Permiso de escritura en este dispositivo: sí/.test(diag) && /Prueba de escritura: sin hacer/.test(diag), 'el diagnóstico dice si hay permiso de escritura y si se ha hecho la prueba');
-  es(/SynchroSound 0\.2\.0/.test(diag) && /buscador v5/.test(diag) && /escrituras enviadas: 0/.test(diag) && /Simulación/.test(diag) && diag.indexOf('Dudosas (' + (nD - 2) + ')') >= 0, 'el diagnóstico lleva versión, recuentos y dudosas');
+  es(/Permiso de escritura en este dispositivo: sí/.test(diag) && /Sincronización: sin hacer/.test(diag) && /fase 2, etapa 1/.test(diag), 'el diagnóstico dice si hay permiso de escritura y si se ha sincronizado');
+  es(/SynchroSound 0\.3\.0/.test(diag) && /buscador v5/.test(diag) && /escrituras enviadas: 0/.test(diag) && /Simulación/.test(diag) && diag.indexOf('Dudosas (' + (nD - 2) + ')') >= 0, 'el diagnóstico lleva versión, recuentos y dudosas');
   const usoLs = await page.evaluate(() => JSON.parse(localStorage.getItem('ss.uso')).n);
   es(usoLs === mundo.spGets && diag.indexOf('Peticiones a Spotify hoy: ' + usoLs + ' entre todos tus dispositivos (este: ' + usoLs + ')') >= 0, 'el contador del día coincide con lo que ha recibido Spotify (' + usoLs + ' y ' + mundo.spGets + ')');
   es(/; \d+ peticiones a Spotify\n  playlists releídas: «NS - Techno»\n/.test(diag), 'el diagnóstico dice qué playlists se han releído');
@@ -344,14 +345,14 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   es(diag.indexOf('usuario_prueba') < 0 && diag.indexOf('ejemplo.test') < 0, 'el diagnóstico no lleva el usuario ni el correo');
   await boton(page, 'Copiar').click();
   const porta = await page.evaluate(() => navigator.clipboard.readText()).catch(() => null);
-  if (porta !== null) es(porta.indexOf('SynchroSound 0.2.0') === 0, 'el botón Copiar copia el diagnóstico');
+  if (porta !== null) es(porta.indexOf('SynchroSound 0.3.0') === 0, 'el botón Copiar copia el diagnóstico');
   await foto(page, 'diagnostico' + sufijo);
 
   // --- el candado ---
   await page.locator('.candado').click();
   t = await page.locator('.candado-panel').innerText();
   es(/0 escrituras/.test(t) && t.indexOf(PEDIDOS.split(' ').join(', ')) >= 0, 'el panel del indicador enseña permisos y escrituras');
-  es(/solo deja salir una escritura: añadir 1 canción a tu playlist «PRUEBA PEGAR»/.test(t) && /ya no es Spotify quien impide/.test(t) && /user-library-modify/.test(t), 'y dice qué es lo único que puede escribir, quién lo garantiza ahora y que los likes no se pueden tocar');
+  es(/solo deja salir una cosa: añadir canciones al final de tus playlists «NS - …» y «OG - …» del mapa/.test(t) && /ya no es Spotify quien impide/.test(t) && /user-library-modify/.test(t), 'y dice qué es lo único que puede escribir, quién lo garantiza ahora y que los likes no se pueden tocar');
   es(/Peticiones a Spotify hoy: \d+ entre todos tus dispositivos/.test(t), 'y cuántas peticiones a Spotify se llevan hoy');
 
   // --- la puerta: aun con el permiso de escritura concedido, nada que no sea GET sale hacia Spotify ---
@@ -866,224 +867,697 @@ async function casos() {
   await x.ctx.close();
 }
 
-async function casosEscritura() {
-  console.log('Prueba de escritura');
-  let x, t;
-  // ================= fase 2, etapa 0: la prueba de escritura =================
-  const conectaTodo = async y => { await conecta(y.page, 'Dropbox'); await conecta(y.page, 'Spotify'); await y.page.waitForFunction(() => /como Prueba/.test(document.body.innerText), null, { timeout: 15000 }); };
-  const prepara = async y => { await pestana(y.page, 'Diagnóstico'); await boton(y.page, 'Preparar la prueba (solo lee)').click(); await y.page.waitForFunction(() => !window.SS.estado.tarea, null, { timeout: 60000 }); };
-  const confirma = async y => {
-    const t0 = await y.page.evaluate(() => (window.SS.estado.prueba ? window.SS.estado.prueba.t : 0));
-    await boton(y.page, 'Confirmar: añadir 1 canción').click();
-    await y.page.waitForFunction(v => !window.SS.estado.tarea && !!window.SS.estado.prueba && window.SS.estado.prueba.t > v, t0, { timeout: 30000 });
+async function casosSinc() {
+  console.log('Sincronización');
+  let x, t, P, w, nPet, dg, ev0, ev, sp, antes, regs, ja, jr, cw, raros, t0, antesItems, preguntas, y, fuera, dato, jm;
+  // COLA=1 pasa solo el último bloque (lo añadido tras la revisión independiente), para iterar deprisa.
+  const COLA = !!process.env.COLA;
+  // ================= fase 2, etapa 1: la sincronización «solo añadir» =================
+  const conectaTodo = async y => {
+    await conecta(y.page, 'Dropbox'); await conecta(y.page, 'Spotify');
+    await y.page.waitForFunction(() => /como Prueba/.test(document.body.innerText), null, { timeout: 15000 });
+    await eligeXml(y.page);
   };
-  const resultado = y => y.page.locator('#prueba-res').innerText();
+  const libre = y => y.page.waitForFunction(() => !window.SS.estado.tarea, null, { timeout: 90000 });
+  const prepara = async y => { await boton(y.page, 'Preparar la sincronización (no envía nada)').click(); await y.page.waitForSelector('#sinc-conf'); };
+  const fila = (y, nombre) => y.page.locator('#sinc-conf li.fila').filter({ has: y.page.locator('label.fila-titulo', { hasText: new RegExp('→ ' + nombre.replace(/[/]/g, '\\/') + '$') }) });
+  const marca = async (y, nombre) => { await fila(y, nombre).locator('input.marca').click(); };
+  const confirma = async y => { await y.page.locator('#sinc-conf .acciones .btn', { hasText: /^Confirmar/ }).click(); await libre(y); };
   const aSpot = y => y.mundo.peticiones.filter(p => p.host === 'api.spotify.com' && p.metodo !== 'OPTIONS');
+  const pl = (lista, nombre) => lista.find(p => p.name === nombre);
+  const uris = p => p.pistas.map(e => e.t.uri);
+  const rutaDe = p => '/v1/playlists/' + p.id + '/items';
+  const archivos = (y, re) => Array.from(y.mundo.archivos.values()).filter(a => re.test(a.ruta));
+  const resultado = y => y.page.locator('#sinc-res').innerText();
   const lsCorteDe = y => y.page.evaluate(() => JSON.parse(localStorage.getItem('ss.corte')));
+  const ANTES = /^\/copias\/antes-de-sincronizar-\d{4}-\d\d-\d\d_\d\d-\d\d-\d\d-[A-Za-z0-9_-]+\.json$/, REGISTRO = /^\/registro\/sincronizacion-\d{4}-\d\d-\d\d_\d\d-\d\d-\d\d-[A-Za-z0-9_-]+\.json$/, COMPLETA = /^\/copias\/spotify-completa-/;
 
-  // Conexión antigua, de solo lectura (la que queda de la versión anterior): ni la app ni Spotify dejan escribir
-  let P = D.conPrueba();
-  const tamIni = P.playlists.map(p => p.pistas.length);
-  const rutaP = '/v1/playlists/' + P.prueba.id + '/items';
-  const llamada = ['POST', '/playlists/' + P.prueba.id + '/items', { cuerpo: { uris: [D.cat.like1.uri] } }];
-  x = await nuevo({ playlists: P.playlists, scopeSpotify: LECTURA });
+  if (!COLA) {
+  // ---------- Conexión antigua, de solo lectura: se puede simular; sincronizar, no ----------
+  P = D.copiaBiblio([D.playlist('OG - Larga', [])], { 'NS - Techno': { public: true } });
+  const ini = {};
+  P.forEach(p => { ini[p.name] = uris(p); });
+  const techno = pl(P, 'NS - Techno'), casa = pl(P, 'NS - House'), larga = pl(P, 'OG - Larga');
+  const llamada = ['POST', '/playlists/' + techno.id + '/items', { cuerpo: { uris: D.aAnadir('ns', 'Techno') } }];
+  x = await nuevo({ playlists: P, xml: D.xmlLargo(), scopeSpotify: LECTURA });
   await conectaTodo(x);
   t = await cuerpo(x.page);
   es(x.mundo.autoriza.sp.scope === PEDIDOS && t.indexOf('Permisos concedidos: ' + LECTURA + '.') >= 0 && /Solo lectura/.test(await x.page.locator('.candado').innerText()), 'con una conexión de solo lectura el indicador sigue diciendo «Solo lectura»');
-  es(/solo con permisos de lectura: todo funciona como antes/.test(t) && await boton(x.page, 'Volver a conectar Spotify').count() === 1, 'y Cuentas explica que para la prueba hay que volver a conectar');
-  await pestana(x.page, 'Sin repartir');
-  await boton(x.page, 'Leer Spotify y calcular').click();
-  await x.page.waitForFunction(() => !!window.SS.estado.c && !window.SS.estado.tarea, null, { timeout: 60000 });
-  await pestana(x.page, 'Diagnóstico');
+  es(/solo con permisos de lectura: todo funciona como antes/.test(t) && /Para sincronizar hay que volver a conectarlo/.test(t) && await boton(x.page, 'Volver a conectar Spotify').count() === 1, 'y Cuentas explica que para sincronizar hay que volver a conectar');
+  await simula(x.page);
   t = await cuerpo(x.page);
-  es(await boton(x.page, 'Preparar la prueba (solo lee)').count() === 0 && /Para la prueba hay que volver a conectarlo/.test(t) && /Permiso de escritura en este dispositivo: no/.test(await x.page.locator('#diag').inputValue()), 'sin el permiso de escritura la prueba no se puede ni preparar');
-  es(/^Bloqueado/.test(await intenta(x.page, llamada)) && x.mundo.escrituras.length === 0, 'y la puerta corta la llamada de la prueba aunque se le pida por otro camino');
-  const directo = await x.page.evaluate(async id => { try { const r = await fetch('https://api.spotify.com/v1/playlists/' + id + '/items', { method: 'POST', headers: { Authorization: 'Bearer ' + window.SS.estado.sp.a, 'Content-Type': 'application/json' }, body: JSON.stringify({ uris: ['spotify:track:x'] }) }); return r.status; } catch (e) { return 'error'; } }, P.prueba.id);
-  es(directo === 403 && P.prueba.pistas.length === 3, 'aunque alguien se saltase la puerta, sin ese permiso Spotify responde 403 y no cambia nada');
+  es(/aquí se puede simular, pero no sincronizar/.test(t) && await boton(x.page, 'Preparar la sincronización (no envía nada)').count() === 0 && (await numeros(x.page)).add > 100, 'sin el permiso de escritura se simula como siempre, pero la sincronización no se puede ni preparar');
+  es(/^Bloqueado/.test(await intenta(x.page, llamada)) && x.mundo.escrituras.length === 0, 'y la puerta corta la escritura aunque se le pida por otro camino');
+  const directo = await x.page.evaluate(async id => { try { const r = await fetch('https://api.spotify.com/v1/playlists/' + id + '/items', { method: 'POST', headers: { Authorization: 'Bearer ' + window.SS.estado.sp.a, 'Content-Type': 'application/json' }, body: JSON.stringify({ uris: ['spotify:track:x'] }) }); return r.status; } catch (e) { return 'error'; } }, casa.id);
+  es(directo === 403 && casa.pistas.length === 2, 'aunque alguien se saltase la puerta, sin ese permiso Spotify responde 403 y no cambia nada');
   x.mundo.escrituras.length = 0; x.mundo.spotifyNoGet.length = 0; // ese POST era de la propia prueba
 
-  // Se vuelve a conectar y Spotify concede la escritura: sigue sin salir nada hasta confirmar
+  // ---------- Se vuelve a conectar y Spotify concede la escritura: sigue sin salir nada hasta confirmar ----------
   x.mundo.opc.scopeSpotify = null;
+  await pestana(x.page, 'Cuentas');
   await boton(x.page, 'Volver a conectar Spotify').click();
   await x.page.waitForFunction(() => document.body.innerText.indexOf('Spotify conectado.') >= 0 || !!document.querySelector('.aviso.error'), null, { timeout: 15000 });
-  await x.page.waitForFunction(() => /como Prueba/.test(document.body.innerText), null, { timeout: 15000 });
+  await x.page.waitForFunction(() => /como Prueba/.test(document.body.innerText) && !!window.SS.estado.xml, null, { timeout: 15000 });
   t = await cuerpo(x.page);
-  es(t.indexOf('Permisos concedidos: ' + PEDIDOS + '.') >= 0 && /Solo prueba/.test(await x.page.locator('.candado').innerText()) && !/solo con permisos de lectura/.test(t), 'tras volver a conectar, Spotify concede la escritura y el indicador pasa a «Solo prueba»');
-  es(/^Bloqueado.*falta la confirmación del usuario/.test(await intenta(x.page, llamada)) && x.mundo.escrituras.length === 0, 'con el permiso concedido, la llamada de la prueba sin confirmar no sale');
+  es(t.indexOf('Permisos concedidos: ' + PEDIDOS + '.') >= 0 && /Solo añadir/.test(await x.page.locator('.candado').innerText()) && !/solo con permisos de lectura/.test(t), 'tras volver a conectar, Spotify concede la escritura y el indicador pasa a «Solo añadir»');
+  await pestana(x.page, 'rekordbox a Spotify');
+  es(/Primero simula/.test(await cuerpo(x.page)) && await boton(x.page, 'Preparar la sincronización (no envía nada)').isDisabled(), 'sin simulación no se puede preparar la sincronización');
+  await simula(x.page);
+  es(/^Bloqueado.*falta la confirmación del usuario/.test(await intenta(x.page, llamada)) && x.mundo.escrituras.length === 0, 'con el permiso concedido y la simulación hecha, la escritura sin confirmar no sale');
+  const gPrep = aSpot(x).length, dPrep = x.mundo.eventos.length;
   await prepara(x);
-  t = await cuerpo(x.page);
-  es(/Se va a añadir 1 canción a tu playlist «PRUEBA PEGAR», que ahora tiene 3 canciones:/.test(t) && /Iris Mar — Solo Me Gusta/.test(t) && await boton(x.page, 'Confirmar: añadir 1 canción').count() === 1, 'preparar enseña la playlist, cuántas canciones tiene y la canción (el like más reciente)');
-  es(x.mundo.escrituras.length === 0 && P.prueba.pistas.length === 3, 'preparar solo lee');
-  // con la confirmación en pantalla, la misma llamada pedida por otro camino sigue cortada, y cualquier variante también
-  const idOtra = P.playlists.find(p => p.name === 'NS - House').id, uriOk = D.cat.like1.uri;
+  es(aSpot(x).length === gPrep && x.mundo.eventos.length === dPrep, 'preparar la sincronización no pide nada a Spotify ni guarda nada en Dropbox');
+  t = await x.page.locator('#sinc-conf').innerText();
+  es(await x.page.locator('#sinc-conf li.fila').count() === 7 && await x.page.locator('#sinc-conf input.marca:checked').count() === 0, 'la pantalla enseña las 7 playlists de rekordbox del mapa y ninguna viene marcada');
+  es(/Ninguna playlist marcada: no se envía nada\./.test(t) && await x.page.locator('#sinc-conf .acciones .btn', { hasText: /^Confirmar/ }).isDisabled(), 'sin ninguna marcada, «Confirmar» está apagado');
+  es(/XML de rekordbox: último cambio el 23\/11\/2026 14:05\. Simulación del \d\d\/\d\d\/\d{4} \d\d:\d\d\. Spotify leído el /.test(t), 'dice de cuándo son el XML, la simulación y la lectura de Spotify');
+  t = await fila(x, 'NS - House').innerText();
+  es(/En Spotify es privada y tiene 2 canciones\. Se añadirían 8 \(\d+ con aviso\)\./.test(t), 'de cada playlist dice si es privada, cuántas tiene y cuántas se añadirían: ' + t.replace(/\n/g, ' ').slice(0, 130));
+  es(/En Spotify es pública y tiene 0 canciones\. Se añadirían 5/.test(await fila(x, 'NS - Techno').innerText()) && /Se añadirían 130\./.test(await fila(x, 'OG - Larga').innerText()), 'y si es pública; en «OG - Larga» son 130');
+  t = await fila(x, 'sin pareja').innerText();
+  es(/New School \/ Chill → sin pareja/.test(t) && /No se puede marcar: no tiene pareja en Spotify\./.test(t) && await fila(x, 'sin pareja').locator('input.marca').isDisabled(), 'una playlist sin pareja no se puede marcar');
+  await fila(x, 'NS - House').getByRole('button', { name: 'Ver las 8', exact: true }).click();
+  t = await fila(x, 'NS - House').innerText();
+  es(/Nora Vex — Paper Lanterns \(Extended Mix\) → Nora Vex — Paper Lanterns/.test(t) && !/Glass Harbor/.test(t) && !/Midnigth Train/.test(t), 'la lista de una playlist enseña solo las que la simulación da como «se añadirían» (ni las que ya están ni las dudosas)');
+  await marca(x, 'NS - Techno');
+  t = await x.page.locator('#sinc-total').innerText();
+  es(/Marcadas: 1 playlist, 5 canciones\. Gasta 1 escritura y unas 2 lecturas de Spotify\./.test(t) && await boton(x.page, 'Confirmar: añadir 5 canciones a 1 playlist').count() === 1, 'al marcar una, dice cuánto es y cuánto gasta: ' + t);
+  // con la confirmación en pantalla y la playlist marcada, la misma llamada pedida por otro camino sigue cortada, y cualquier variante también
+  const uriOk = D.aAnadir('ns', 'Techno')[0], idOtra = pl(P, 'VARIOS - Otra').id;
   const variantes = [
     llamada,
+    ['POST', '/playlists/' + techno.id + '/items', { cuerpo: { uris: [uriOk] } }],
+    ['POST', '/playlists/' + casa.id + '/items', { cuerpo: { uris: D.aAnadir('ns', 'House') } }],
     ['POST', '/playlists/' + idOtra + '/items', { cuerpo: { uris: [uriOk] } }],
-    ['POST', '/playlists/' + P.prueba.id + '/items', { cuerpo: { uris: [uriOk, D.cat.glass.uri] } }],
-    ['POST', '/playlists/' + P.prueba.id + '/items', { cuerpo: { uris: [D.cat.glass.uri] } }],
-    ['POST', '/playlists/' + P.prueba.id + '/items?position=0', { cuerpo: { uris: [uriOk] } }],
-    ['POST', '/playlists/' + P.prueba.id + '/items', { cuerpo: { uris: [uriOk], position: 0 } }],
-    ['PUT', '/playlists/' + P.prueba.id + '/items', { cuerpo: { uris: [uriOk] } }],
-    ['DELETE', '/playlists/' + P.prueba.id + '/items', { cuerpo: { items: [{ uri: uriOk }] } }],
-    ['POST', '/me/playlists', { cuerpo: { name: 'PRUEBA PEGAR' } }],
+    ['POST', '/playlists/' + techno.id + '/items?position=0', { cuerpo: { uris: [uriOk] } }],
+    ['POST', '/playlists/' + techno.id + '/items', { cuerpo: { uris: [uriOk], position: 0 } }],
+    ['PUT', '/playlists/' + techno.id + '/items', { cuerpo: { uris: [uriOk] } }],
+    ['DELETE', '/playlists/' + techno.id + '/items', { cuerpo: { items: [{ uri: uriOk }] } }],
+    ['POST', '/me/playlists', { cuerpo: { name: 'NS - Nueva' } }],
     ['PUT', '/me/tracks', { cuerpo: { ids: [D.cat.like1.id] } }],
+    ['PUT', '/me/library', { cuerpo: { uris: [uriOk] } }],
   ];
   const coladas = [];
   for (const it of variantes) if (!/^Bloqueado/.test(await intenta(x.page, it))) coladas.push(it[0] + ' ' + it[1]);
   es(coladas.length === 0 && x.mundo.escrituras.length === 0, 'ni la llamada exacta ni sus variantes salen sin pasar por «Confirmar» (' + (coladas.join(', ') || 'ninguna colada') + ')');
   await boton(x.page, 'Cancelar').click();
-  es(await boton(x.page, 'Confirmar: añadir 1 canción').count() === 0 && x.mundo.escrituras.length === 0, '«Cancelar» cierra la confirmación sin enviar nada');
+  es(await x.page.locator('#sinc-conf').count() === 0 && x.mundo.escrituras.length === 0, '«Cancelar» cierra la confirmación sin enviar nada');
 
-  // La prueba, confirmada: sale una sola llamada, la esperada
+  // ---------- Una sola playlist, confirmada: copia, relectura, una escritura y comprobación ----------
   await prepara(x);
-  let nPet = aSpot(x).length;
+  es(await x.page.locator('#sinc-conf input.marca:checked').count() === 0, 'al preparar otra vez, vuelve a no haber ninguna marcada');
+  await marca(x, 'NS - Techno');
+  nPet = aSpot(x).length;
+  ev0 = x.mundo.eventos.length;
   await confirma(x);
-  let trio = aSpot(x).slice(nPet).map(p => p.metodo + ' ' + p.ruta);
-  es(trio.join(' | ') === 'GET ' + rutaP + ' | POST ' + rutaP + ' | GET ' + rutaP, 'al confirmar: relee la playlist de Spotify, envía una escritura y vuelve a leerla (' + trio.join(' | ').split(P.prueba.id).join('<prueba>') + ')');
-  let w = x.mundo.escrituras;
-  es(w.length === 1 && w[0].metodo === 'POST' && w[0].ruta === rutaP && w[0].q === '' && w[0].cuerpo === JSON.stringify({ uris: [uriOk] }) && /^application\/json/.test(w[0].tipo),
-    'lo único que sale que no es GET: un POST a la playlist «PRUEBA PEGAR» con esa canción y nada más (' + w.map(e => e.metodo + ' ' + e.cuerpo).join(' | ') + ')');
-  es(P.prueba.pistas.length === 4 && P.prueba.pistas[3].t.id === D.cat.like1.id, 'y en Spotify la playlist pasa de 3 a 4 canciones, con esa al final');
-  es(P.playlists.every((p, i) => p === P.prueba || p.pistas.length === tamIni[i]) && D.playlists.find(p => p.name === 'NS - House').pistas.length === 2, 'ninguna otra playlist cambia');
+  ev = x.mundo.eventos.slice(ev0), sp = ev.filter(e => /^sp /.test(e));
+  es(sp.join(' | ') === 'sp GET ' + rutaDe(techno) + ' | sp POST ' + rutaDe(techno) + ' | sp GET ' + rutaDe(techno), 'al confirmar: relee la playlist de Spotify, envía una escritura y vuelve a leerla (' + sp.join(' | ').split(techno.id).join('<techno>') + ')');
+  const iCopia = ev.findIndex(e => /^db sube \/copias\/antes-de-sincronizar-/.test(e)), iPost = ev.findIndex(e => /^sp POST/.test(e)), iPrimera = ev.findIndex(e => /^sp /.test(e));
+  es(iCopia >= 0 && iCopia < iPrimera && iCopia < iPost, 'la copia se guarda en Dropbox antes de la primera petición a Spotify y antes de escribir');
+  es(archivos(x, COMPLETA).length === 1 && ev.findIndex(e => /^db sube \/copias\/spotify-completa-/.test(e)) > iCopia && ev.findIndex(e => /^db sube \/copias\/spotify-completa-/.test(e)) < iPrimera, 'como no había ninguna copia completa, también se guarda una, antes de pedir nada a Spotify');
+  w = x.mundo.escrituras;
+  es(w.length === 1 && w[0].metodo === 'POST' && w[0].ruta === rutaDe(techno) && w[0].q === '' && w[0].cuerpo === JSON.stringify({ uris: D.aAnadir('ns', 'Techno') }) && /^application\/json/.test(w[0].tipo),
+    'lo único que sale que no es GET: un POST a «NS - Techno» con sus 5 canciones, en el orden de rekordbox, y nada más');
+  es(JSON.stringify(uris(techno)) === JSON.stringify(D.aAnadir('ns', 'Techno')) && P.every(p => p === techno || JSON.stringify(uris(p)) === JSON.stringify(ini[p.name])), 'en Spotify «NS - Techno» pasa a tener esas 5 y ninguna otra playlist cambia');
   t = await resultado(x);
-  es(/Iris Mar — Solo Me Gusta/.test(t) && /Spotify ha aceptado la escritura \(201\)\. Comprobado releyendo la playlist: la canción está \(3 canciones antes, 4 canciones ahora\)\./.test(t), 'el resultado dice que Spotify la aceptó y que se ha comprobado releyendo: ' + t.slice(0, 160));
-  let dg = await x.page.locator('#diag').inputValue();
-  es(/escrituras enviadas: 1;/.test(dg) && /Prueba de escritura: [^\n]* \(v0\.2\.0\) en «PRUEBA PEGAR» \(pública\); canción: Iris Mar — Solo Me Gusta\n  antes: 3; enviada: sí, una vez; respuesta: 201; sello nuevo: sí; error: ninguno\n  después: 4; la canción está: 1 vez\n  resultado: Spotify ha aceptado/.test(dg), 'y el diagnóstico lleva la prueba entera');
+  es(/Última sincronización \([^)]+\): completa: añadidas 5 canciones en 1 playlist, comprobadas releyendo cada playlist\./.test(t) && /«NS - Techno»: añadidas 5 \(0 antes, 5 ahora\)\. Comprobado releyendo la playlist\./.test(t), 'el resultado dice lo añadido y que se ha comprobado releyendo: ' + t.replace(/\n/g, ' ').slice(0, 170));
+  antes = archivos(x, ANTES), regs = archivos(x, REGISTRO);
+  ja = antes.length === 1 ? JSON.parse(antes[0].texto) : null, jr = regs.length === 1 ? JSON.parse(regs[0].texto) : null;
+  es(!!ja && ja.playlists.length === 1 && ja.playlists[0].nombre === 'NS - Techno' && ja.playlists[0].canciones.length === 0 && ja.playlists[0].se_van_a_anadir.map(c => c.uri).join() === D.aAnadir('ns', 'Techno').join(), 'la copia previa lleva la playlist tal como estaba y lo que se iba a añadir');
+  es(!!jr && jr.final === 'completa' && jr.copia_previa === antes[0].ruta.split('/').pop() && jr.playlists[0].anadidas.map(c => c.uri).join() === D.aAnadir('ns', 'Techno').join() && jr.playlists[0].enviadas_sin_comprobar.length === 0 && /Kilo X Lima — Night Bus/.test(jr.playlists[0].anadidas[0].rekordbox),
+    'y queda un registro en Dropbox con lo añadido, canción a canción');
+  es(t.indexOf(antes[0].ruta.split('/').pop()) >= 0 && t.indexOf(regs[0].ruta.split('/').pop()) >= 0, 'el resultado nombra la copia y el registro');
+  await pestana(x.page, 'Diagnóstico');
+  dg = await x.page.locator('#diag').inputValue();
+  es(/escrituras enviadas: 1;/.test(dg) && /Sincronización: [^\n]* \(v0\.3\.0\): completa: añadidas 5 canciones en 1 playlist[^\n]*\n  copia previa: antes-de-sincronizar-[^\n]*; registro: sincronizacion-[^\n]*\n  NS - Techno \(pública\): ok; pedidas 5; antes 0; después 5; añadidas 5\n    lote 1: 5; enviado: sí, una vez; respuesta: 201; sello nuevo: sí; relecturas: 1; cuadra: sí; se ven: 5 de 5\n/.test(dg), 'y el diagnóstico lleva la sincronización entera');
   es((await x.page.evaluate(() => JSON.parse(localStorage.getItem('ss.uso')).n)) === x.mundo.spGets + 1, 'la escritura cuenta en las peticiones del día');
   await x.page.locator('.candado').click();
-  es(/y 1 escritura\./.test(await x.page.locator('.candado-panel').innerText()), 'y en el panel del indicador');
+  t = await x.page.locator('.candado-panel').innerText();
+  es(/y 1 escritura\./.test(t) && /solo deja salir una cosa: añadir canciones al final de tus playlists «NS - …» y «OG - …» del mapa/.test(t) && /user-library-modify/.test(t), 'el panel del indicador cuenta la escritura y dice qué es lo único que puede escribir');
   await x.page.locator('.candado').click();
-  // una segunda vez en la misma carga de página: no hay botón y la puerta no deja
-  es(await boton(x.page, 'Preparar la prueba (solo lee)').count() === 0 && /esta versión no envía más de una\. Para repetir la prueba, recarga la página/.test(await cuerpo(x.page)), 'tras una escritura, en esa carga de página ya no se ofrece otra');
-  es(/^Bloqueado/.test(await intenta(x.page, ['POST', '/playlists/' + P.prueba.id + '/items', { cuerpo: { uris: [D.cat.glass.uri] } }])) && x.mundo.escrituras.length === 1, 'y la puerta tampoco deja salir otra');
-  // el tope de una por carga está en la puerta, no solo en la pantalla: aunque la pantalla volviese a ofrecerla, no sale
-  await x.page.evaluate(() => { window.SS.estado.cont.spEscr = 0; window.SS.pinta(); });
+  await pestana(x.page, 'rekordbox a Spotify');
+  es(await x.page.locator('#sinc-conf').count() === 0 && /Primero simula/.test(await cuerpo(x.page)) && await boton(x.page, 'Preparar la sincronización (no envía nada)').isDisabled(), 'tras sincronizar hay que simular otra vez para preparar otra');
+  es(/^Bloqueado/.test(await intenta(x.page, llamada)) && x.mundo.escrituras.length === 1, 'y la misma escritura ya no sale por ningún camino');
+
+  // ---------- El resto, de una vez: seis lotes, y «OG - Larga» en dos (100 + 30) ----------
+  const gSim = aSpot(x).length;
+  await simula(x.page, 'Simular');
+  es(aSpot(x).length - gSim <= 2 && !/fecha desconocida/.test(await cuerpo(x.page)), 'la simulación siguiente vuelve a comprobar Spotify con 2 peticiones (lo escrito ya está guardado) y no dice «fecha desconocida»');
   await prepara(x);
+  t = await fila(x, 'NS - Techno').innerText();
+  es(/Nada que añadir: no se puede marcar\./.test(t) && await fila(x, 'NS - Techno').locator('input.marca').isDisabled(), 'lo que se acaba de añadir ya consta como que está: en «NS - Techno» no queda nada que añadir');
+  await boton(x.page, 'Marcar todas').click();
+  t = await x.page.locator('#sinc-total').innerText();
+  es(/Marcadas: 5 playlists, 142 canciones\. Gasta 6 escrituras y unas \d+ lecturas de Spotify\./.test(t), '«Marcar todas» marca las cinco en las que hay algo que añadir: ' + t);
+  ev0 = x.mundo.eventos.length;
   await confirma(x);
+  ev = x.mundo.eventos.slice(ev0);
+  w = x.mundo.escrituras.slice(1);
+  const esperadas = [['NS - House', D.aAnadir('ns', 'House')], ['NS - Raw / UK Garage', D.aAnadir('ns', 'Raw/UK Garage')], ['OG - All', D.aAnadir('og', 'ALL')], ['OG - Classics', D.aAnadir('og', 'Classics')],
+    ['OG - Larga', D.largas.slice(0, 100).map(c => c.uri)], ['OG - Larga', D.largas.slice(100).map(c => c.uri)]];
+  es(w.length === 6 && w.every((e, i) => e.metodo === 'POST' && e.ruta === rutaDe(pl(P, esperadas[i][0])) && e.cuerpo === JSON.stringify({ uris: esperadas[i][1] })),
+    'salen seis escrituras, una por lote y en orden, cada una con exactamente sus canciones; «OG - Larga» va en dos lotes de 100 y 30 (' + w.map(e => JSON.parse(e.cuerpo).uris.length).join(', ') + ')');
+  // tras cada POST, lo siguiente que se pide a Spotify es la lectura de esa misma playlist; y antes de cada playlist, su lectura
+  const sp2 = ev.filter(e => /^sp /.test(e));
+  es(sp2.every((e, i) => !/^sp POST/.test(e) || (sp2[i - 1] === e.replace('POST', 'GET') && sp2[i + 1] === e.replace('POST', 'GET'))), 'cada escritura va entre dos lecturas de su playlist: la de justo antes y la de comprobación');
+  es(ev.filter(e => /^db sube \/copias\/spotify-completa-/.test(e)).length === 0 && archivos(x, ANTES).length === 2 && archivos(x, REGISTRO).length === 2 && ev.findIndex(e => /^db sube \/copias\/antes-/.test(e)) < ev.findIndex(e => /^sp /.test(e)),
+    'esta vez no se repite la copia completa: se guarda la de las playlists que se van a tocar, antes de pedir nada a Spotify');
+  es(esperadas.slice(0, 4).every(([n, u]) => JSON.stringify(uris(pl(P, n))) === JSON.stringify(ini[n].concat(u))) && JSON.stringify(uris(larga)) === JSON.stringify(D.largas.map(c => c.uri)),
+    'cada playlist queda como estaba más lo suyo, al final y en orden');
+  es(P.every(p => new Set(uris(p)).size === uris(p).length) && ['Sound All', 'Sound Down', 'Sound Try', 'VARIOS - Larga', 'VARIOS - Otra', 'Lista ajena'].every(n => JSON.stringify(uris(pl(P, n))) === JSON.stringify(ini[n])),
+    'ninguna canción queda repetida en una playlist, y las playlists de fuera del mapa no cambian');
+  const enDos = u => P.filter(p => /^(NS|OG) - /.test(p.name) && uris(p).indexOf(u) >= 0).map(p => p.name).join(' + ');
+  es(enDos(D.cat.velvetRmx.uri) === 'NS - Techno + NS - Raw / UK Garage' && enDos(D.cat.signal.uri) === 'OG - All + OG - Classics' && enDos(D.cat.cobaltExt.uri) === 'NS - House + OG - All', 'una canción que en rekordbox está en dos playlists va a las dos, una vez a cada una');
   t = await resultado(x);
-  es(x.mundo.escrituras.length === 1 && P.prueba.pistas.length === 4 && /No se ha enviado nada a Spotify\. Bloqueado: [^\n]*ya se ha enviado una escritura desde que se cargó la página/.test(t), 'una segunda escritura confirmada en la misma carga de página se corta en la puerta: ' + t.slice(-120));
-  // al recargar se ve el último resultado y se puede preparar otra: elige el siguiente like, porque el primero ya está
-  await x.page.reload();
-  await x.page.waitForFunction(() => !!(window.SS && window.SS.estado.memLista), null, { timeout: 15000 });
-  es(/Última prueba/.test(await resultado(x)) && /Prueba de escritura: [^\n]*canción: Nora Vex — Glass Harbor\n  antes: 4; enviada: no;/.test(await x.page.locator('#diag').inputValue()), 'al recargar, el último resultado sigue a la vista y en el diagnóstico');
-  await prepara(x);
-  t = await cuerpo(x.page);
-  es(/que ahora tiene 4 canciones:/.test(t) && /Nora Vex — Glass Harbor/.test(t), 'otra prueba elige el siguiente like que no esté ya en la playlist');
-  await boton(x.page, 'Cancelar').click();
-  es(x.mundo.escrituras.length === 1 && x.mundo.spotifyNoGet.join() === 'POST ' + rutaP, 'en todo el caso, a Spotify solo ha salido esa escritura');
-  let raros3 = x.consola.filter(m => !/^Bloqueado|Error: Bloqueado/.test(m));
-  es(raros3.length === 0, 'la prueba de escritura, sin errores en la consola: ' + raros3.slice(0, 3).join(' | '));
+  es(/completa: añadidas 142 canciones en 5 playlists/.test(t) && /«OG - Larga»: añadidas 130 \(0 antes, 130 ahora\)/.test(t), 'el resultado: ' + t.replace(/\n/g, ' ').slice(0, 120));
+  jr = JSON.parse(archivos(x, REGISTRO).sort((a, b) => (a.ruta > b.ruta ? 1 : -1))[1].texto);
+  es(jr.playlists.length === 5 && jr.playlists[4].lotes.length === 2 && jr.playlists[4].anadidas.length === 130 && jr.playlists.every(p => p.estado === 'ok'), 'y el registro lleva las cinco playlists, con los dos lotes de la larga');
+  await simula(x.page, 'Simular');
+  const fin = await numeros(x.page);
+  es(fin.add === 0, 'una simulación después ya no encuentra nada que añadir (se añadirían: ' + fin.add + ')');
+  es(/no hay nada|Nada que añadir/.test(await (async () => { await prepara(x); return x.page.locator('#sinc-conf').innerText(); })()) && await x.page.locator('#sinc-conf input.marca:enabled').count() === 0, 'y la pantalla de sincronización no deja marcar ninguna');
+  es(x.mundo.spotifyNoGet.every(e => /^POST \/v1\/playlists\/[^/]+\/items$/.test(e)) && x.mundo.escrituras.length === 7, 'en todo el caso, a Spotify solo han salido esas siete escrituras');
+  raros = x.consola.filter(m => !/^Bloqueado|Error: Bloqueado/.test(m));
+  es(raros.length === 0, 'la sincronización, sin errores en la consola: ' + raros.slice(0, 3).join(' | '));
   await x.ctx.close();
 
-  // Spotify rechaza o falla: una sola escritura, nunca se reintenta, y se relee la playlist para comparar
+  // ---------- El mapa apunta a una playlist con otro nombre: la pantalla lo dice y no deja marcarla ----------
+  P = D.copiaBiblio();
+  x = await nuevo({ playlists: P });
+  await conectaTodo(x);
+  await simula(x.page);
+  await x.page.locator('select[aria-label="Playlist de Spotify para Raw/UK Garage"]').selectOption({ label: 'VARIOS - Otra' });
+  await simula(x.page, 'Simular');
+  await prepara(x);
+  t = await fila(x, 'VARIOS - Otra').innerText();
+  es(/New School \/ Raw\/UK Garage → VARIOS - Otra/.test(t) && /No se puede marcar: el nombre de «VARIOS - Otra» no empieza por «NS - » ni por «OG - »\./.test(t) && await fila(x, 'VARIOS - Otra').locator('input.marca').isDisabled(),
+    'si el mapa apunta a una playlist que no se llama «NS - …» ni «OG - …», la pantalla lo dice y no deja marcarla');
+  await boton(x.page, 'Marcar todas').click();
+  es(!(await x.page.evaluate(() => window.SS.estado.plan.marcadas['NS/Raw/UK Garage'])) && /Marcadas: 4 playlists/.test(await x.page.locator('#sinc-total').innerText()), '«Marcar todas» tampoco la marca');
+  // aunque la pantalla la diese por marcada (un fallo del código), no sale nada: se vuelve a comprobar al confirmar
+  await x.page.evaluate(() => { const p = window.SS.estado.plan, f = p.filas.find(q => q.clave === 'NS/Raw/UK Garage'); p.marcadas = {}; p.marcadas[f.clave] = true; f.bloqueo = ''; f.uris = [window.SS.estado.plan.filas[1].uris[0]]; f.antes = []; window.SS.pinta(); });
+  nPet = aSpot(x).length;
+  await confirma(x);
+  es(x.mundo.escrituras.length === 0 && aSpot(x).length === nPet && archivos(x, ANTES).length === 0 && JSON.stringify(uris(pl(P, 'VARIOS - Otra'))) === JSON.stringify([D.cat.lady.uri, D.cat.openWater.uri]) &&
+    await x.page.locator('.aviso.error', { hasText: 'No se ha enviado nada a Spotify' }).count() >= 1, 'y si aun así llegase marcada a «Confirmar», no se envía nada: ni copia, ni lecturas, ni escritura');
+  es(/^Bloqueado/.test(await intenta(x.page, ['POST', '/playlists/' + pl(P, 'VARIOS - Otra').id + '/items', { cuerpo: { uris: [D.cat.glass.uri] } }])) && x.mundo.escrituras.length === 0, 'y la puerta corta cualquier escritura en ella');
+  await x.ctx.close();
+
+  // ---------- Entre simular y confirmar una playlist cambia: se relee justo antes y esa no se toca ----------
+  P = D.copiaBiblio();
+  x = await nuevo({ playlists: P });
+  await conectaTodo(x);
+  await simula(x.page);
+  await prepara(x);
+  await marca(x, 'NS - House');
+  await marca(x, 'NS - Techno');
+  const casa2 = pl(P, 'NS - House'), techno2 = pl(P, 'NS - Techno');
+  casa2.pistas.push({ added_at: '2026-11-24T10:00:00Z', t: D.cat.paper }); casa2.snapshot_id += 'm'; // alguien añade a mano una de las que se iban a añadir
+  ev0 = x.mundo.eventos.length;
+  await confirma(x);
+  sp = x.mundo.eventos.slice(ev0).filter(e => /^sp /.test(e));
+  es(sp.join(' | ') === ['sp GET ' + rutaDe(casa2), 'sp GET ' + rutaDe(techno2), 'sp POST ' + rutaDe(techno2), 'sp GET ' + rutaDe(techno2)].join(' | '), 'la playlist que ha cambiado se relee y no se escribe en ella; la otra sigue adelante');
+  t = await resultado(x);
+  es(casa2.pistas.length === 3 && x.mundo.escrituras.length === 1 && /terminada con 1 playlist sin tocar/.test(t) && /«NS - House»: no se ha tocado\. Al releerla justo antes de escribir no era la misma que vio la simulación \(ahora tiene 3 canciones\)\. Simula otra vez\./.test(t) && /«NS - Techno»: añadidas 5/.test(t),
+    'y el resultado lo dice: ' + t.replace(/\n/g, ' ').slice(0, 150));
+  await simula(x.page, 'Simular');
+  await prepara(x);
+  es(/tiene 3 canciones\. Se añadirían 7/.test(await fila(x, 'NS - House').innerText()), 'al simular otra vez, la que se añadió a mano ya cuenta como que está (quedan 7 por añadir)');
+  await x.ctx.close();
+
+  // ---------- Spotify rechaza o falla: una sola escritura, nunca se reintenta, se relee y se para ----------
   const fallos = [
-    { n: 'un 403', esc: { estado: 403, mensaje: 'Forbidden' }, queda: 3, re: /Spotify ha rechazado la escritura: Spotify respondió 403: Forbidden [^.]*\. Comprobado releyendo la playlist: la canción no está \(3 canciones antes, 3 canciones ahora\)\. La escritura no se ha repetido\./ },
-    { n: 'un 405', esc: { estado: 405, mensaje: 'Method not allowed' }, queda: 3, re: /Spotify ha rechazado la escritura: Spotify respondió 405: Method not allowed [^.]*\. Comprobado releyendo la playlist: la canción no está/ },
-    { n: 'un 401', esc: { estado: 401, mensaje: 'The access token expired' }, queda: 3, re: /Spotify ha rechazado la escritura: Spotify respondió 401[^.]*\. Comprobado releyendo la playlist: la canción no está/ },
-    { n: 'un 500 que no llegó a aplicarse', esc: { estado: 500, mensaje: 'Server error' }, queda: 3, re: /Enviada una vez, y no se sabe si llegó a Spotify: Spotify respondió 500: Server error [^.]*\. Comprobado releyendo la playlist: la canción no está \(3 canciones antes, 3 canciones ahora\)\. La escritura no se ha repetido\./ },
-    { n: 'un 500 que sí se aplicó', esc: { estado: 500, mensaje: 'Server error', llega: true }, queda: 4, re: /Enviada una vez, y no se sabe si llegó a Spotify: Spotify respondió 500[^.]*\. Comprobado releyendo la playlist: la canción está \(3 canciones antes, 4 canciones ahora\)\. La escritura no se ha repetido\./ },
-    { n: 'la conexión se corta y no llegó', esc: { red: true }, queda: 3, re: /Enviada una vez, y no se sabe si llegó a Spotify: Se cortó la conexión con Spotify al enviar la escritura\. Comprobado releyendo la playlist: la canción no está \(3 canciones antes, 3 canciones ahora\)\. La escritura no se ha repetido\./ },
-    { n: 'la conexión se corta pero sí llegó', esc: { red: true, llega: true }, queda: 4, re: /Enviada una vez, y no se sabe si llegó a Spotify: Se cortó la conexión con Spotify al enviar la escritura\. Comprobado releyendo la playlist: la canción está \(3 canciones antes, 4 canciones ahora\)\. La escritura no se ha repetido\./ },
+    { n: 'un 403', esc: { estado: 403, mensaje: 'Forbidden' }, sec: 'GET POST GET', queda: 0, estado: 'rechazada', re: /«NS - Techno»: Spotify ha rechazado la escritura: Spotify respondió 403: Forbidden [^.]*\. Al releer, de las 5 enviadas se ven 0 \(0 antes, 0 ahora\)\. La escritura no se ha repetido\./ },
+    { n: 'un 500 que no llegó a aplicarse', esc: { estado: 500, mensaje: 'Server error' }, sec: 'GET POST GET GET', queda: 0, estado: 'incierta', re: /«NS - Techno»: enviada una vez, y no se sabe si llegó: Spotify respondió 500: Server error [^.]*\. Al releer, de las 5 enviadas se ven 0 \(0 antes, 0 ahora\)\. La escritura no se ha repetido\./ },
+    { n: 'un 500 que sí se aplicó', esc: { estado: 500, mensaje: 'Server error', llega: true }, sec: 'GET POST GET', queda: 5, estado: 'llego', re: /«NS - Techno»: Spotify no confirmó la escritura: Spotify respondió 500[^.]*\. Al releer están las 5 enviadas \(0 antes, 5 ahora\); la escritura no se ha repetido\./ },
+    { n: 'un 401 (la sesión ha caducado en Spotify)', esc: { estado: 401, mensaje: 'The access token expired' }, sec: 'GET POST GET', queda: 0, estado: 'rechazada', re: /«NS - Techno»: Spotify ha rechazado la escritura: Spotify respondió 401: The access token expired [^.]*\. Al releer, de las 5 enviadas se ven 0 \(0 antes, 0 ahora\)\. La escritura no se ha repetido\./ },
+    { n: 'la conexión se corta pero sí llegó', esc: { red: true, llega: true }, sec: 'GET POST GET', queda: 5, estado: 'llego', re: /«NS - Techno»: Spotify no confirmó la escritura: Se cortó la conexión con Spotify al enviar la escritura\. Al releer están las 5 enviadas \(0 antes, 5 ahora\); la escritura no se ha repetido\./ },
   ];
   for (const f of fallos) {
-    P = D.conPrueba();
-    x = await nuevo({ playlists: P.playlists, escritura: f.esc });
+    P = D.copiaBiblio();
+    x = await nuevo({ playlists: P, escritura: f.esc });
     await conectaTodo(x);
+    await simula(x.page);
     await prepara(x);
-    nPet = aSpot(x).length;
+    await marca(x, 'NS - Techno');
+    await marca(x, 'OG - All');
+    ev0 = x.mundo.eventos.length;
     await confirma(x);
-    trio = aSpot(x).slice(nPet).map(p => p.metodo);
-    es(x.mundo.escrituras.length === 1 && trio.join(' ') === 'GET POST GET' && x.mundo.refrescos.sp === 0, 'si Spotify responde con ' + f.n + ': una sola escritura, sin reintentos, y después relee (' + trio.join(' ') + ')');
+    sp = x.mundo.eventos.slice(ev0).filter(e => /^sp /.test(e)).map(e => e.split(' ')[1]);
+    es(x.mundo.escrituras.length === 1 && sp.join(' ') === f.sec && x.mundo.refrescos.sp === 0, 'si Spotify responde con ' + f.n + ': una sola escritura, sin reintentos, y después relee (' + sp.join(' ') + ')');
     t = await resultado(x);
-    es(f.re.test(t) && P.prueba.pistas.length === f.queda, 'y dice lo que ha pasado de verdad (' + f.n + '): ' + t.replace(/^[^:]*:[^:]*: /, '').slice(0, 150));
-    es(await boton(x.page, 'Preparar la prueba (solo lee)').count() === 0 && /^Bloqueado/.test(await intenta(x.page, ['POST', '/playlists/' + P.prueba.id + '/items', { cuerpo: { uris: [D.cat.like1.uri] } }])) && x.mundo.escrituras.length === 1, 'y no se ofrece ni se deja repetirla en esa carga (' + f.n + ')');
+    es(f.re.test(t) && /parada\. /.test(t) && /Ninguna escritura se ha repetido\./.test(t) && pl(P, 'NS - Techno').pistas.length === f.queda, 'y dice lo que ha pasado de verdad (' + f.n + '): ' + t.replace(/\n/g, ' ').replace(/^[^:]*:[^:]*: /, '').slice(0, 150));
+    es(/«OG - All»: no se ha tocado: la sincronización se paró antes de llegar a ella\./.test(t) && pl(P, 'OG - All').pistas.length === 2 && x.mundo.itemsDe[pl(P, 'OG - All').id] === 1, 'la sincronización se para ahí: la siguiente playlist ni se relee ni se toca (' + f.n + ')');
+    jr = archivos(x, REGISTRO).map(a => JSON.parse(a.texto))[0];
+    es(!!jr && jr.playlists[0].estado === f.estado && jr.playlists[0].anadidas.length === f.queda && jr.playlists[0].enviadas_que_no_se_ven_al_releer.length === 5 - f.queda && jr.playlists[1].estado === 'pendiente' && /^parada|llegó|rechazado|No se sabe/.test(jr.final), 'y el registro apunta lo que se envió y lo que se ve al releer (' + f.n + ')');
     await x.ctx.close();
   }
 
-  // Spotify corta (429) justo en la escritura: no se envía nada más, ni la comprobación, y no se «prueba» repitiéndola
-  P = D.conPrueba();
-  x = await nuevo({ playlists: P.playlists, escritura: { estado: 429, cuota: true } });
+  // ---------- Spotify corta (429) justo en una escritura: no se envía nada más, ni la comprobación ----------
+  P = D.copiaBiblio();
+  x = await nuevo({ playlists: P, escritura: { estado: 429, cuota: true } });
   await conectaTodo(x);
+  await simula(x.page);
   await prepara(x);
-  nPet = aSpot(x).length;
+  await marca(x, 'NS - Techno');
+  await marca(x, 'OG - All');
+  ev0 = x.mundo.eventos.length;
   await confirma(x);
-  trio = aSpot(x).slice(nPet).map(p => p.metodo);
-  es(x.mundo.escrituras.length === 1 && trio.join(' ') === 'GET POST' && P.prueba.pistas.length === 3, 'un 429 a la escritura: se para ahí y no se envía ni la lectura de comprobación (' + trio.join(' ') + ')');
-  es(/Enviada una vez, y Spotify la ha cortado: Límite de peticiones de Spotify \(cuota agotada\)\. No se puede comprobar ahora y la escritura no se repite/.test(await resultado(x)), 'y el resultado lo dice');
-  let cw = await lsCorteDe(x);
-  es(cw && cw.escr === true && cw.cuota === true && cw.ruta === '/playlists/' + P.prueba.id + '/items' && !cw.fin, 'el corte queda apuntado como corte de una escritura');
-  t = await x.page.locator('.corte-sp').innerText();
+  sp = x.mundo.eventos.slice(ev0).filter(e => /^sp /.test(e)).map(e => e.split(' ')[1]);
+  es(x.mundo.escrituras.length === 1 && sp.join(' ') === 'GET POST' && pl(P, 'NS - Techno').pistas.length === 0, 'un 429 a la escritura: se para ahí y no se envía ni la lectura de comprobación (' + sp.join(' ') + ')');
+  t = await resultado(x);
+  es(/«NS - Techno»: Spotify cortó las peticiones al enviar 5 canciones\. No se puede comprobar ahora y la escritura no se repite: míralo en Spotify\./.test(t) && /«OG - All»: no se ha tocado/.test(t), 'y el resultado lo dice');
+  cw = await lsCorteDe(x);
+  es(cw && cw.escr === true && cw.cuota === true && cw.ruta === '/playlists/' + pl(P, 'NS - Techno').id + '/items' && !cw.fin, 'el corte queda apuntado como corte de una escritura');
+  t = await x.page.locator('.corte-sp').first().innerText();
   es(/El rechazo fue a una escritura\./.test(t) && /La app no repite una escritura para probar/.test(t) && await boton(x.page, 'Probar ahora (gasta 1 petición)').count() === 0, 'y el aviso no ofrece «Probar ahora»: la app no escribe para probar');
-  es(/Último corte de Spotify: [^\n]*\/items \(escritura\); motivo: QUOTA_EXCEEDED/.test(await x.page.locator('#diag').inputValue()), 'el diagnóstico dice que el corte fue a una escritura');
-  await x.page.evaluate(() => { const c = JSON.parse(localStorage.getItem('ss.corte')); c.hasta = Date.now() - 1; localStorage.setItem('ss.corte', JSON.stringify(c)); });
-  await x.page.evaluate(id => window.SS.spotify('GET', '/playlists/' + id + '/items?limit=1'), P.prueba.id);
-  es(!(await lsCorteDe(x)).fin, 'que después responda una lectura no da por terminado el corte de una escritura');
+  es(await boton(x.page, 'Preparar la sincronización (no envía nada)').isDisabled() && /Spotify tiene cortadas las peticiones de la app/.test(await cuerpo(x.page)), 'mientras dura el corte no se puede preparar otra sincronización');
+  jr = archivos(x, REGISTRO).map(a => JSON.parse(a.texto))[0];
+  es(!!jr && jr.playlists[0].estado === 'corte' && jr.playlists[0].enviadas_sin_comprobar.length === 5 && jr.playlists[0].anadidas.length === 0, 'y el registro apunta esas 5 como enviadas y sin comprobar');
   await x.ctx.close();
 
-  // La playlist de la prueba tiene que ser una sola, tuya, y llamarse exactamente así: si no, no se llega ni a confirmar
-  x = await nuevo(); // la biblioteca común no tiene «PRUEBA PEGAR»
+  // ---------- Si la copia no se puede guardar, no se escribe ----------
+  P = D.copiaBiblio();
+  x = await nuevo({ playlists: P, subidaFalla: /antes-de-sincronizar/ });
   await conectaTodo(x);
-  const sinConfirmar = async () => await boton(x.page, 'Confirmar: añadir 1 canción').count() === 0 && x.mundo.escrituras.length === 0;
+  await simula(x.page);
   await prepara(x);
-  es(/No encuentro ninguna playlist que se llame exactamente «PRUEBA PEGAR»/.test(await cuerpo(x.page)) && await sinConfirmar(), 'sin la playlist «PRUEBA PEGAR» la prueba no se prepara');
-  x.mundo.playlists = D.conPrueba(null, { name: 'Prueba pegar' }).playlists;
-  await prepara(x);
-  es(await sinConfirmar() && await x.page.locator('.aviso.error', { hasText: 'No encuentro ninguna playlist' }).count() >= 1, 'un nombre parecido («Prueba pegar») no vale');
-  x.mundo.playlists = D.conPrueba([D.playlist('PRUEBA PEGAR', [])]).playlists;
-  await prepara(x);
-  es(/Hay 2 playlists que se llaman «PRUEBA PEGAR»/.test(await cuerpo(x.page)) && await sinConfirmar(), 'con dos playlists con ese nombre, tampoco');
-  x.mundo.playlists = D.conPrueba(null, { owner: { id: 'otra_persona', display_name: 'Otra' } }).playlists;
-  await prepara(x);
-  es(/«PRUEBA PEGAR» no es tuya/.test(await cuerpo(x.page)) && await sinConfirmar(), 'ni si la playlist es de otra persona');
-  await x.ctx.close();
-
-  // Entre preparar y confirmar la playlist cambia: se relee justo antes de escribir y, si la canción ya está, no se envía
-  P = D.conPrueba();
-  x = await nuevo({ playlists: P.playlists });
-  await conectaTodo(x);
-  await prepara(x);
-  P.prueba.pistas.push({ added_at: '2026-11-24T10:00:00Z', t: D.cat.like1 }); P.prueba.snapshot_id += 'm'; // alguien la añade a mano
+  await marca(x, 'NS - Techno');
   nPet = aSpot(x).length;
   await confirma(x);
-  es(x.mundo.escrituras.length === 0 && aSpot(x).length === nPet + 1 && /No se ha enviado nada a Spotify\. La canción ya estaba en la playlist al releerla/.test(await resultado(x)), 'si al releer justo antes la canción ya está, no se envía nada');
-  // una preparación vieja no vale
-  await prepara(x);
-  await x.page.evaluate(() => { window.SS.estado.pruebaPrep.t -= 11 * 60000; });
-  nPet = aSpot(x).length;
-  await boton(x.page, 'Confirmar: añadir 1 canción').click();
-  await x.page.waitForFunction(() => !window.SS.estado.tarea && /Han pasado más de 10 minutos/.test(document.body.innerText), null, { timeout: 15000 });
-  es(x.mundo.escrituras.length === 0 && aSpot(x).length === nPet && await boton(x.page, 'Confirmar: añadir 1 canción').count() === 0, 'una confirmación sobre una preparación de hace más de 10 minutos no envía nada');
+  es(x.mundo.escrituras.length === 0 && aSpot(x).length === nPet && pl(P, 'NS - Techno').pistas.length === 0 &&
+    await x.page.locator('.aviso.error', { hasText: /No se ha podido guardar la copia en Dropbox.*Sin copia no se escribe\. No se ha enviado nada a Spotify\./ }).count() === 1, 'si la copia no se guarda en Dropbox, no se pide ni se escribe nada en Spotify, y lo dice');
   await x.ctx.close();
 
-  // Con la confirmación de verdad, la puerta vuelve a comprobarlo todo por su cuenta: si algo no cuadra, no sale
-  P = D.conPrueba();
-  x = await nuevo({ playlists: P.playlists });
+  // ---------- Spotify concede solo uno de los dos permisos de escritura ----------
+  x = await nuevo({ playlists: D.copiaBiblio(), scopeSpotify: LECTURA + ' playlist-modify-public' });
   await conectaTodo(x);
-  const idCasa = P.playlists.find(p => p.name === 'NS - House'), tamCasa = idCasa.pistas.length;
-  const trampas = [
-    { n: 'la playlist ya no se llama «PRUEBA PEGAR»', f: () => { window.SS.estado.lib.playlists.find(p => p.nombre === 'PRUEBA PEGAR').nombre = 'Otra cosa'; }, re: /el destino no es tu playlist «PRUEBA PEGAR»/ },
-    { n: 'la playlist consta como de otra persona', f: () => { window.SS.estado.lib.playlists.find(p => p.nombre === 'PRUEBA PEGAR').propia = false; }, re: /el destino no es tu playlist «PRUEBA PEGAR»/ },
-    { n: 'el destino es otra playlist', f: id => { window.SS.estado.pruebaPrep.id = id; }, arg: idCasa.id, re: /el destino no es tu playlist «PRUEBA PEGAR»/ },
-    { n: 'lo que se añade no es una canción', f: () => { window.SS.estado.pruebaPrep.m.u = 'spotify:episode:0000000000000000000000'; }, re: /el cuerpo no es exactamente la canción confirmada/ },
-    { n: 'el permiso de escritura ya no consta', f: () => { window.SS.estado.sp.scope = 'playlist-read-private playlist-read-collaborative user-library-read'; }, re: /Spotify no ha concedido el permiso de escritura/,
-      despues: () => { window.SS.estado.sp.scope += ' playlist-modify-public playlist-modify-private'; window.SS.pinta(); } },
-  ];
-  for (const tr of trampas) {
-    await prepara(x);
-    await x.page.evaluate(tr.f, tr.arg);
-    await confirma(x);
-    t = await resultado(x);
-    es(x.mundo.escrituras.length === 0 && P.prueba.pistas.length === 3 && idCasa.pistas.length === tamCasa && /No se ha enviado nada a Spotify\. Bloqueado:/.test(t) && tr.re.test(t), 'confirmada, pero ' + tr.n + ': la puerta no la deja salir (' + t.slice(-90) + ')');
-    if (tr.despues) await x.page.evaluate(tr.despues);
+  await simula(x.page);
+  es(/Solo añadir/.test(await x.page.locator('.candado').innerText()) && await boton(x.page, 'Preparar la sincronización (no envía nada)').count() === 0, 'con solo uno de los dos permisos de escritura no se ofrece sincronizar y el indicador no dice «Solo lectura»');
+  await x.ctx.close();
   }
-  es((await x.page.evaluate(() => window.SS.estado.cont.spBloqueadas)) === trampas.length && (await x.page.evaluate(() => window.SS.estado.cont.spEscr)) === 0, 'y todas quedan contadas como bloqueadas');
+
+  // ================= etapa 2: lo que puede torcerse alrededor de una escritura =================
+  const monta = async (opc, marcas) => {
+    P = D.copiaBiblio();
+    x = await nuevo(Object.assign({ playlists: P }, opc || {}));
+    await conectaTodo(x);
+    await simula(x.page);
+    await prepara(x);
+    for (const n of marcas) await marca(x, n);
+    ev0 = x.mundo.eventos.length;
+  };
+  const spDesde = y => y.mundo.eventos.slice(ev0).filter(e => /^sp /.test(e)).map(e => e.split(' ')[1]).join(' ');
+  const registro = y => archivos(y, REGISTRO).map(a => JSON.parse(a.texto))[0];
+  const techDe = lista => pl(lista, 'NS - Techno');
+
+  if (!COLA) {
+  // ---------- Spotify dice 201 pero al releer no está todo: se para, no se repite, y luego solo propone lo que falta ----------
+  await monta({ escritura: { parcial: 3 } }, ['NS - Techno', 'OG - All']);
+  await confirma(x);
+  t = await resultado(x);
+  es(x.mundo.escrituras.length === 1 && spDesde(x) === 'GET POST GET' && /«NS - Techno»: Spotify respondió 201, pero al releer no cuadra: de las 5 enviadas se ven 3 \(0 antes, 3 ahora\)\. La escritura no se ha repetido\. Spotify puede tardar en enseñar un cambio: espera un par de minutos y simula otra vez antes de añadir nada a mano\./.test(t) && /«OG - All»: no se ha tocado/.test(t),
+    'un 201 que solo añade 3 de 5: lo detecta al releer, no repite la escritura y se para: ' + t.replace(/\n/g, ' ').slice(0, 110));
+  jr = registro(x);
+  es(!!jr && jr.playlists[0].estado === 'nocuadra' && jr.playlists[0].anadidas.length === 3 && jr.playlists[0].enviadas_que_no_se_ven_al_releer.length === 2, 'el registro separa las 3 que están de las 2 que no');
+  await simula(x.page, 'Simular');
+  await prepara(x);
+  t = await fila(x, 'NS - Techno').innerText();
+  es(/No se puede marcar: la app escribió en ella hace menos de dos minutos y no pudo comprobar del todo cómo quedó: espera a las \d\d:\d\d y simula otra vez\./.test(t) && await fila(x, 'NS - Techno').locator('input.marca').isDisabled(),
+    'durante dos minutos no deja volver a escribir en esa playlist (lo que «falta» puede estar y no verse todavía): ' + t.replace(/\n/g, ' ').slice(-120));
+  await x.page.evaluate(() => { const d = JSON.parse(localStorage.getItem('ss.dudosas') || '{}'); Object.keys(d).forEach(k => { d[k] -= 3 * 60000; }); localStorage.setItem('ss.dudosas', JSON.stringify(d)); });
+  await boton(x.page, 'Cancelar').click();
+  await prepara(x);
+  es(/tiene 3 canciones\. Se añadirían 2/.test(await fila(x, 'NS - Techno').innerText()) && !(await fila(x, 'NS - Techno').locator('input.marca').isDisabled()), 'pasado ese tiempo propone solo las 2 que faltan, no las 5');
   await x.ctx.close();
 
-  // Spotify concede solo uno de los dos permisos de escritura: no se ofrece la prueba, pero el indicador ya no dice «Solo lectura»
-  x = await nuevo({ playlists: D.conPrueba().playlists, scopeSpotify: LECTURA + ' playlist-modify-public' });
-  await conectaTodo(x);
+  // ---------- Spotify dice 201 y las añade dos veces: se ve al releer y no se toca nada más ----------
+  await monta({ escritura: { doble: true } }, ['NS - Techno', 'OG - All']);
+  await confirma(x);
+  t = await resultado(x);
+  es(x.mundo.escrituras.length === 1 && /no cuadra: de las 5 enviadas se ven 5, 5 de ellas repetidas \(0 antes, 10 ahora\)/.test(t) && /«OG - All»: no se ha tocado/.test(t), 'si aparecen repetidas (Spotify las añade dos veces), lo dice y se para');
+  await simula(x.page, 'Simular');
+  await prepara(x);
+  es(/Nada que añadir/.test(await fila(x, 'NS - Techno').innerText()) && x.mundo.escrituras.length === 1, 'y después no propone añadirlas otra vez');
+  await x.ctx.close();
+
+  // ---------- Spotify acepta y tarda en enseñarlo: se relee una vez más (leer, no escribir) ----------
+  await monta({ escritura: { oculta: 1 } }, ['NS - Techno', 'OG - All']);
+  t0 = Date.now();
+  await confirma(x);
+  t = await resultado(x);
+  es(x.mundo.escrituras.length === 2 && spDesde(x) === 'GET POST GET GET GET POST GET GET' && /completa: añadidas 7 canciones en 2 playlists/.test(t) && Date.now() - t0 >= 6000,
+    'si Spotify acepta el lote y al releer aún no se ve, espera y lee una vez más; escribir, una sola vez por lote (' + spDesde(x) + ')');
   await pestana(x.page, 'Diagnóstico');
-  es(/Solo prueba/.test(await x.page.locator('.candado').innerText()) && await boton(x.page, 'Preparar la prueba (solo lee)').count() === 0, 'con solo uno de los dos permisos de escritura no se ofrece la prueba y el indicador no dice «Solo lectura»');
+  es(/lote 1: 5; enviado: sí, una vez; respuesta: 201; sello nuevo: sí; relecturas: 2; cuadra: sí; se ven: 5 de 5/.test(await x.page.locator('#diag').inputValue()), 'y el diagnóstico dice que hizo falta una segunda lectura');
+  await x.ctx.close();
+
+  await monta({ escritura: { oculta: 2 } }, ['NS - Techno', 'OG - All']);
+  await confirma(x);
+  t = await resultado(x);
+  es(x.mundo.escrituras.length === 1 && spDesde(x) === 'GET POST GET GET' && /Spotify respondió 201, pero al releer no cuadra: de las 5 enviadas se ven 0 \(0 antes, 0 ahora\)\. La escritura no se ha repetido\. Spotify puede tardar en enseñar un cambio/.test(t) && techDe(P).pistas.length === 5,
+    'si tras la segunda lectura sigue sin verse, se para sin repetir la escritura (en Spotify sí están)');
+  await simula(x.page, 'Simular');
+  await prepara(x);
+  es(/Nada que añadir/.test(await fila(x, 'NS - Techno').innerText()) && x.mundo.escrituras.length === 1, 'y la simulación siguiente ya las ve: no propone añadirlas otra vez');
+  await x.ctx.close();
+
+  // ---------- No se puede comprobar (falla la lectura de después) y, además, la lista de playlists va con retraso ----------
+  await monta({ itemsFallaTrasEscribir: 403, listaAtrasada: true }, ['NS - Techno', 'OG - All']);
+  await confirma(x);
+  t = await resultado(x);
+  es(x.mundo.escrituras.length === 1 && spDesde(x) === 'GET POST GET' && /«NS - Techno»: enviadas 5 canciones \(respuesta: 201\) y no se ha podido comprobar releyendo: Spotify respondió 403[^.]*\. La escritura no se repite: míralo en Spotify\./.test(t) && /«OG - All»: no se ha tocado/.test(t),
+    'si la lectura de comprobación falla, lo dice, no repite la escritura y se para: ' + t.replace(/\n/g, ' ').slice(0, 100));
+  jr = registro(x);
+  es(!!jr && jr.playlists[0].estado === 'sincomprobar' && jr.playlists[0].enviadas_sin_comprobar.length === 5 && jr.playlists[0].anadidas.length === 0, 'el registro las apunta como enviadas y sin comprobar');
+  x.mundo.opc.itemsFallaTrasEscribir = null;
+  antesItems = x.mundo.itemsDe[techDe(P).id];
+  await simula(x.page, 'Simular');
+  await prepara(x);
+  es(x.mundo.itemsDe[techDe(P).id] === antesItems + 1 && /Nada que añadir/.test(await fila(x, 'NS - Techno').innerText()) && x.mundo.escrituras.length === 1,
+    'aunque la lista de playlists diga que nada ha cambiado, esa playlist se vuelve a pedir a Spotify: no se propone añadir lo que ya está');
+  await x.ctx.close();
+
+  // ---------- La página se cierra o se recarga con una escritura en vuelo ----------
+  await monta({ escritura: { cuelga: true }, listaAtrasada: true }, ['NS - Techno', 'OG - All']);
+  preguntas = 0;
+  x.page.on('dialog', d => { preguntas++; d.accept().catch(() => {}); });
+  await x.page.locator('#sinc-conf .acciones .btn', { hasText: /^Confirmar/ }).click();
+  await x.page.waitForFunction(() => window.SS.estado.cont.spEscr === 1, null, { timeout: 30000 });
+  for (let i = 0; i < 50 && x.mundo.escrituras.length < 1; i++) await x.page.waitForTimeout(100);
+  await x.page.reload();
+  await x.page.waitForSelector('.cab');
+  await x.page.waitForFunction(() => !!window.SS.estado.xml, null, { timeout: 15000 });
+  await pestana(x.page, 'rekordbox a Spotify');
+  t = await resultado(x);
+  es(preguntas === 1, 'al recargar con una sincronización en marcha, el navegador pregunta antes (' + preguntas + ')');
+  es(x.mundo.escrituras.length === 1 && /sin terminar: o sigue en marcha en otra pestaña, o la página se cerró o se recargó antes de acabar/.test(t) && /«NS - Techno»: quedó a mitad de enviar 5 canciones \(si la página se cerró o se recargó ahí, no se sabe si llegaron\)\. La escritura no se repite/.test(t) && /«OG - All»: no se ha tocado/.test(t),
+    'si la página se recarga con una escritura en vuelo, al volver dice hasta dónde llegó y que no se sabe si llegó: ' + t.replace(/\n/g, ' ').slice(0, 110));
+  es(/El registro no se llegó a guardar/.test(t) && archivos(x, ANTES).length === 1 && archivos(x, REGISTRO).length === 0, 'dice que no hay registro y que la copia previa sí está');
+  x.mundo.opc.escritura = null;
+  antesItems = x.mundo.itemsDe[techDe(P).id];
+  await simula(x.page);
+  await prepara(x);
+  es(x.mundo.itemsDe[techDe(P).id] === antesItems + 1 && /Nada que añadir/.test(await fila(x, 'NS - Techno').innerText()) && x.mundo.escrituras.length === 1 && techDe(P).pistas.length === 5,
+    'y al simular otra vez esa playlist se pide de nuevo a Spotify (aunque la lista diga que no ha cambiado): no se añade dos veces');
+  await x.ctx.close();
+
+  // ---------- El registro no se puede guardar: la sincronización vale y lo dice ----------
+  await monta({ subidaFalla: /^\/registro\// }, ['NS - Techno']);
+  await confirma(x);
+  t = await resultado(x);
+  es(x.mundo.escrituras.length === 1 && /completa: añadidas 5 canciones en 1 playlist/.test(t) && /El registro no se ha podido guardar en Dropbox \(.*400.*\)\. Lo que se iba a añadir a cada playlist está en la copia previa, y cuántas se añadieron, aquí y en el diagnóstico\./.test(t), 'si el registro no se puede guardar, lo dice (lo añadido está comprobado y sale en el diagnóstico)');
+  await pestana(x.page, 'Diagnóstico');
+  es(/registro: NO GUARDADO/.test(await x.page.locator('#diag').inputValue()), 'y el diagnóstico también');
+  await x.ctx.close();
+
+  // ---------- Doble clic en «Confirmar»: una sola sincronización ----------
+  await monta({ escritura: { espera: 400 } }, ['NS - Techno']);
+  await x.page.evaluate(() => { const b = Array.from(document.querySelectorAll('#sinc-conf .acciones .btn')).find(q => /^Confirmar/.test(q.textContent)); b.click(); b.click(); });
+  await libre(x);
+  es(x.mundo.escrituras.length === 1 && techDe(P).pistas.length === 5 && archivos(x, ANTES).length === 1 && /completa: añadidas 5 canciones/.test(await resultado(x)), 'dos clics seguidos en «Confirmar» hacen una sola sincronización');
+  await x.ctx.close();
+
+  // ---------- Lo marcado no coincide con la simulación (un fallo del código): no sale nada ----------
+  await monta(null, ['NS - Techno']);
+  await x.page.evaluate(u => { window.SS.estado.plan.filas.find(q => q.clave === 'NS/Techno').uris.push(u); }, D.cat.glass.uri);
+  nPet = aSpot(x).length;
+  await confirma(x);
+  es(x.mundo.escrituras.length === 0 && aSpot(x).length === nPet && archivos(x, ANTES).length === 0 && await x.page.locator('.aviso.error', { hasText: /Lo que se añadiría a «NS - Techno» ha cambiado.*No se ha enviado nada a Spotify\./ }).count() === 1,
+    'si lo marcado lleva una canción que la simulación no da (un fallo del código), no se envía nada');
+  await x.ctx.close();
+
+  // ---------- Simulación de más de una hora ----------
+  await monta(null, ['NS - Techno']);
+  await x.page.evaluate(() => { const S = window.SS.estado; S.sim.fecha -= 61 * 60000; S.plan.sim = S.sim.fecha; window.SS.pinta(); });
+  t = await x.page.locator('#sinc-conf').innerText();
+  es(/La simulación tiene más de una hora: simula otra vez\./.test(t) && await x.page.locator('#sinc-conf .acciones .btn', { hasText: /^Confirmar/ }).isDisabled(), 'con una simulación de más de una hora, «Confirmar» se apaga y pide simular otra vez');
+  await boton(x.page, 'Cancelar').click();
+  es(await boton(x.page, 'Preparar la sincronización (no envía nada)').isDisabled() && x.mundo.escrituras.length === 0, 'y tampoco deja preparar otra');
+  await x.ctx.close();
+
+  // ---------- Spotify se ha vuelto a leer después de simular: la simulación ya no vale para sincronizar ----------
+  await monta(null, ['NS - Techno']);
+  await x.page.evaluate(() => { window.SS.estado.lib.leida += 1; window.SS.pinta(); }); // como si se hubiera leído otra vez
+  t = await x.page.locator('#sinc-conf').innerText();
+  es(/Spotify se ha vuelto a leer, o ha cambiado, después de la simulación: simula otra vez\./.test(t) && await x.page.locator('#sinc-conf .acciones .btn', { hasText: /^Confirmar/ }).isDisabled() && x.mundo.escrituras.length === 0,
+    'si Spotify se ha vuelto a leer después de simular, «Confirmar» se apaga y pide simular otra vez');
+  await x.ctx.close();
+
+  // ---------- Dos playlists de rekordbox apuntan a la misma de Spotify ----------
+  P = D.copiaBiblio();
+  x = await nuevo({ playlists: P });
+  await conectaTodo(x);
+  await simula(x.page);
+  await x.page.locator('select[aria-label="Playlist de Spotify para Raw/UK Garage"]').selectOption({ label: 'NS - Techno' });
+  await simula(x.page, 'Simular');
+  await prepara(x);
+  const dos = fila(x, 'NS - Techno');
+  es(await dos.count() === 2 && /No se puede marcar: hay 2 playlists de rekordbox que apuntan a «NS - Techno»\./.test(await dos.nth(0).innerText()) && /hay 2 playlists de rekordbox/.test(await dos.nth(1).innerText()) &&
+    await dos.nth(0).locator('input.marca').isDisabled() && await dos.nth(1).locator('input.marca').isDisabled(), 'si dos playlists de rekordbox apuntan a la misma de Spotify, ninguna de las dos se puede marcar');
+  await x.ctx.close();
+
+  // ---------- «Parar»: solo entre lotes o entre playlists, nunca entre una escritura y su comprobación ----------
+  P = D.copiaBiblio([D.playlist('OG - Larga', [])]);
+  x = await nuevo({ playlists: P, xml: D.xmlLargo(), escritura: { espera: 1200 } });
+  await conectaTodo(x);
+  await simula(x.page);
+  await prepara(x);
+  await marca(x, 'OG - Larga');
+  ev0 = x.mundo.eventos.length;
+  await x.page.locator('#sinc-conf .acciones .btn', { hasText: /^Confirmar/ }).click();
+  for (let i = 0; i < 100 && x.mundo.escrituras.length < 1; i++) await x.page.waitForTimeout(100);
+  await boton(x.page, 'Parar').click();
+  await libre(x);
+  t = await resultado(x);
+  const larga2 = pl(P, 'OG - Larga');
+  es(x.mundo.escrituras.length === 1 && /^GET POST( GET)+$/.test(spDesde(x)) && larga2.pistas.length === 100 && /parada\. La paraste a mitad de «OG - Larga»\./.test(t) && /«OG - Larga»: parada a medias\. Añadidas 100 de 130 \(0 antes, 100 ahora\); lo añadido está comprobado\./.test(t),
+    '«Parar» durante el primer lote: ese lote se termina y se comprueba, y el segundo no sale: ' + t.replace(/\n/g, ' ').slice(0, 110));
+  jr = registro(x);
+  es(!!jr && jr.playlists[0].estado === 'parada' && jr.playlists[0].anadidas.length === 100, 'el registro lleva las 100 añadidas');
+  await simula(x.page, 'Simular');
+  await prepara(x);
+  es(/tiene 100 canciones\. Se añadirían 30\./.test(await fila(x, 'OG - Larga').innerText()), 'la simulación siguiente propone las 30 que faltan');
+  await marca(x, 'NS - House');
+  await marca(x, 'OG - Larga');
+  ev0 = x.mundo.eventos.length;
+  await x.page.locator('#sinc-conf .acciones .btn', { hasText: /^Confirmar/ }).click();
+  for (let i = 0; i < 100 && x.mundo.escrituras.length < 2; i++) await x.page.waitForTimeout(100);
+  await boton(x.page, 'Parar').click();
+  await libre(x);
+  t = await resultado(x);
+  es(x.mundo.escrituras.length === 2 && spDesde(x) === 'GET POST GET' && larga2.pistas.length === 100 && /parada\. La paraste antes de empezar con «OG - Larga»\./.test(t) && /«NS - House»: añadidas 8/.test(t) && /«OG - Larga»: no se ha tocado/.test(t),
+    '«Parar» durante una playlist: esa se termina y la siguiente ni se relee');
+  x.mundo.opc.escritura = null;
+  await simula(x.page, 'Simular');
+  await prepara(x);
+  await marca(x, 'OG - Larga');
+  await confirma(x);
+  es(JSON.stringify(uris(larga2)) === JSON.stringify(D.largas.map(c => c.uri)) && x.mundo.escrituras.length === 3 && x.mundo.escrituras[2].cuerpo === JSON.stringify({ uris: D.largas.slice(100).map(c => c.uri) }),
+    'y al terminar en otra sincronización, la playlist queda con las 130, una vez cada una y en orden');
+  raros = x.consola.filter(m => !/^Bloqueado|Error: Bloqueado/.test(m));
+  es(raros.length === 0, 'sin errores en la consola: ' + raros.slice(0, 3).join(' | '));
+  await x.ctx.close();
+
+  // ---------- Emulando un iPhone: preparar, marcar tocando y sincronizar ----------
+  P = D.copiaBiblio();
+  x = await nuevo({ playlists: P }, Object.assign({}, devices['iPhone 14'], { defaultBrowserType: undefined }));
+  await conectaTodo(x);
+  await simula(x.page);
+  await prepara(x);
+  await fila(x, 'NS - Techno').locator('input.marca').tap();
+  await fila(x, 'OG - All').locator('label.fila-titulo').tap(); // tocar el nombre también marca
+  es(/Marcadas: 2 playlists, 7 canciones\./.test(await x.page.locator('#sinc-total').innerText()), 'en el iPhone emulado se marca tocando la casilla o el nombre');
+  const ancho = await x.page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  es(ancho <= 1, 'la pantalla de confirmación no se sale de ancho en el iPhone emulado (' + ancho + ' px)');
+  await foto(x.page, 'sinc-confirma-iphone');
+  await x.page.locator('#sinc-conf .acciones .btn', { hasText: /^Confirmar/ }).tap();
+  await libre(x);
+  t = await resultado(x);
+  es(x.mundo.escrituras.length === 2 && /completa: añadidas 7 canciones en 2 playlists/.test(t) && techDe(P).pistas.length === 5 && pl(P, 'OG - All').pistas.length === 4, 'y la sincronización funciona igual');
+  raros = x.consola.filter(m => !/^Bloqueado|Error: Bloqueado/.test(m));
+  es(raros.length === 0, 'sin errores en la consola en el iPhone emulado: ' + raros.slice(0, 3).join(' | '));
+  await x.ctx.close();
+  }
+
+  // ================= etapa 2, tras la revisión independiente =================
+  const otroEn = async mundo => { // otro navegador (otro «dispositivo») sobre el mismo Spotify y el mismo Dropbox
+    const ctx = await navegador.newContext({ locale: 'es-ES', timezoneId: 'Europe/Madrid' });
+    await mundo.instala(ctx);
+    const page = await ctx.newPage();
+    const consola = [];
+    page.on('pageerror', e => consola.push('pageerror: ' + e.message));
+    await page.goto(SITIO);
+    await page.waitForSelector('.cab');
+    return { mundo, ctx, page, consola };
+  };
+  const pulsaConfirmar = y => y.page.locator('#sinc-conf .acciones .btn', { hasText: /^Confirmar/ }).click();
+  const avisoDe = (y, re) => y.page.locator('.aviso.error', { hasText: re }).count();
+
+  // ---------- Dos pestañas del mismo navegador confirman a la vez: solo una sincroniza ----------
+  P = D.copiaBiblio();
+  x = await nuevo({ playlists: P, escritura: { espera: 900 } });
+  await conectaTodo(x);
+  await simula(x.page);
+  y = { mundo: x.mundo, ctx: x.ctx, page: await x.ctx.newPage(), consola: [] };
+  await y.page.goto(SITIO);
+  await y.page.waitForSelector('.cab');
+  await y.page.waitForFunction(() => !!window.SS.estado.xml && !!window.SS.estado.sp, null, { timeout: 15000 });
+  await simula(y.page);
+  await prepara(x); await marca(x, 'NS - Techno');
+  await prepara(y); await marca(y, 'NS - Techno');
+  await Promise.all([pulsaConfirmar(x), pulsaConfirmar(y)]);
+  await libre(x); await libre(y);
+  fuera = await avisoDe(x, /Hay otra sincronización en marcha en otra pestaña de este navegador/) + await avisoDe(y, /Hay otra sincronización en marcha en otra pestaña de este navegador/);
+  es(x.mundo.escrituras.length === 1 && techDe(P).pistas.length === 5 && new Set(uris(techDe(P))).size === 5 && fuera === 1, 'dos pestañas que confirman a la vez: solo una sincroniza, la otra lo dice, y no hay duplicados (' + x.mundo.escrituras.length + ' escritura; avisos: ' + fuera + ')');
+  await x.ctx.close();
+
+  // ---------- Dos dispositivos confirman a la vez: como mucho uno escribe ----------
+  for (const desfase of [0, 250]) {
+    P = D.copiaBiblio();
+    x = await nuevo({ playlists: P, escritura: { espera: 900 } });
+    await conectaTodo(x);
+    await simula(x.page);
+    y = await otroEn(x.mundo);
+    await conecta(y.page, 'Dropbox'); await conecta(y.page, 'Spotify');
+    await y.page.waitForFunction(() => /como Prueba/.test(document.body.innerText) && !!window.SS.estado.xml, null, { timeout: 15000 });
+    await simula(y.page);
+    await prepara(x); await marca(x, 'NS - Techno');
+    await prepara(y); await marca(y, 'NS - Techno');
+    await Promise.all([pulsaConfirmar(x), (async () => { if (desfase) await y.page.waitForTimeout(desfase); await pulsaConfirmar(y); })()]);
+    await libre(x); await libre(y);
+    fuera = await avisoDe(x, /Hay otra sincronización empezada hace menos de un cuarto de hora/) + await avisoDe(y, /Hay otra sincronización empezada hace menos de un cuarto de hora/);
+    es(x.mundo.escrituras.length <= 1 && techDe(P).pistas.length <= 5 && new Set(uris(techDe(P))).size === techDe(P).pistas.length && fuera >= 1 && archivos(x, /^\/copias\/antes-de-sincronizar-/).length === 2 && archivos(x, /^\/registro\/sincronizacion-/).length === 2,
+      'dos dispositivos que confirman a la vez (desfase ' + desfase + ' ms): como mucho uno escribe y no hay duplicados (' + x.mundo.escrituras.length + ' escrituras, ' + techDe(P).pistas.length + ' canciones; se retiran: ' + fuera + ')');
+    await y.ctx.close();
+    await x.ctx.close();
+  }
+
+  // ---------- Un «No es» hecho en otro dispositivo cuenta al confirmar ----------
+  await monta(null, ['NS - Techno']);
+  dato = await x.page.evaluate(() => { const u = window.SS.estado.sim.unicas.find(q => /Night Bus/.test(q.rb.nombre)); return { clave: u.rb.clave, uri: u.elegida.sp.uri }; });
+  jm = JSON.parse(x.mundo.archivos.get('/memoria/memoria.json').texto);
+  jm.decisiones[dato.clave] = { si: null, m: null, no: [dato.uri], t: Date.now() + 5000 };
+  x.mundo.pon('/memoria/memoria.json', JSON.stringify(jm));
+  nPet = aSpot(x).length;
+  await confirma(x);
+  es(x.mundo.escrituras.length === 0 && aSpot(x).length === nPet && archivos(x, ANTES).length === 0 && await avisoDe(x, /Lo que se añadiría a «NS - Techno» ha cambiado desde que se preparó la sincronización.*No se ha enviado nada a Spotify\./) === 1,
+    'un «No es» guardado desde otro dispositivo después de simular: al confirmar se entera y no envía nada');
+  await prepara(x);
+  es(await x.page.evaluate(u => window.SS.estado.plan.filas.find(q => q.clave === 'NS/Techno').uris.indexOf(u) < 0, dato.uri), 'y al preparar otra vez, esa canción ya no está entre las que se añadirían');
+  await x.ctx.close();
+
+  // ---------- Un cambio de mapa hecho en otro dispositivo también ----------
+  await monta(null, ['NS - Techno']);
+  jm = JSON.parse(x.mundo.archivos.get('/memoria/memoria.json').texto);
+  jm.mapa['NS/Techno'] = { id: pl(P, 'NS - House').id, t: Date.now() + 5000 };
+  x.mundo.pon('/memoria/memoria.json', JSON.stringify(jm));
+  await confirma(x);
+  es(x.mundo.escrituras.length === 0 && archivos(x, ANTES).length === 0 && await avisoDe(x, /El mapa de playlists ha cambiado desde la simulación.*No se ha enviado nada a Spotify\./) === 1, 'un cambio de mapa guardado desde otro dispositivo: al confirmar se entera y no envía nada');
+  await x.ctx.close();
+
+  // ---------- No se sabe si llegó y Spotify tarda en enseñarlo: segunda lectura, y no dice «no están» ----------
+  await monta({ escritura: { red: true, llega: true, oculta: 1 } }, ['NS - Techno', 'OG - All']);
+  await confirma(x);
+  t = await resultado(x);
+  es(x.mundo.escrituras.length === 1 && spDesde(x) === 'GET POST GET GET' && /Spotify no confirmó la escritura: Se cortó la conexión con Spotify al enviar la escritura\. Al releer están las 5 enviadas \(0 antes, 5 ahora\)/.test(t) && /llegó, pero Spotify no la confirmó: por prudencia se para aquí/.test(t),
+    'corte de red con la escritura hecha y Spotify que tarda en enseñarla: lee una segunda vez y las ve (' + spDesde(x) + ')');
+  await x.ctx.close();
+  await monta({ escritura: { red: true, llega: true, oculta: 2 } }, ['NS - Techno', 'OG - All']);
+  await confirma(x);
+  t = await resultado(x);
+  es(x.mundo.escrituras.length === 1 && /Al releer, de las 5 enviadas se ven 0 \(0 antes, 0 ahora\)\. La escritura no se ha repetido\. Spotify puede tardar en enseñar un cambio: espera un par de minutos y simula otra vez antes de añadir nada a mano\./.test(t),
+    'si tampoco se ven a la segunda, no afirma que no estén: avisa de que Spotify puede tardar');
+  jr = registro(x);
+  es(!!jr && jr.playlists[0].enviadas_que_no_se_ven_al_releer.length === 5 && jr.final !== 'completa', 'y el registro las apunta como «enviadas que no se ven al releer»');
+  await x.ctx.close();
+
+  // ---------- Una escritura que no responde: a los 30 s se corta sola, no se repite y se relee ----------
+  await monta({ escritura: { cuelga: true } }, ['NS - Techno', 'OG - All']);
+  t0 = Date.now();
+  await confirma(x);
+  t = await resultado(x);
+  es(Date.now() - t0 >= 29000 && x.mundo.escrituras.length === 1 && spDesde(x) === 'GET POST GET' && /«NS - Techno»: Spotify no confirmó la escritura: Se cortó la conexión con Spotify al enviar la escritura\. Al releer están las 5 enviadas/.test(t) && /«OG - All»: no se ha tocado/.test(t),
+    'una escritura que no responde no deja la app colgada: a los 30 s se da por cortada, no se repite y se relee (' + Math.round((Date.now() - t0) / 1000) + ' s)');
+  await x.ctx.close();
+
+  // ---------- Spotify acepta sin devolver cuerpo ----------
+  await monta({ escritura: { sinCuerpo: true } }, ['NS - Techno']);
+  await confirma(x);
+  es(x.mundo.escrituras.length === 1 && /completa: añadidas 5 canciones en 1 playlist/.test(await resultado(x)), 'un 201 sin cuerpo no se toma por fallo: se comprueba releyendo, como siempre');
+  await x.ctx.close();
+
+  // ---------- Si no se puede guardar la copia completa (la primera vez), tampoco se escribe ----------
+  await monta({ subidaFalla: /spotify-completa/ }, ['NS - Techno']);
+  nPet = aSpot(x).length;
+  await confirma(x);
+  es(x.mundo.escrituras.length === 0 && aSpot(x).length === nPet && await avisoDe(x, /No se ha podido guardar la copia en Dropbox.*Sin copia no se escribe\. No se ha enviado nada a Spotify\./) === 1, 'si falla la copia completa de la primera vez, tampoco se escribe');
+  await x.ctx.close();
+
+  // ---------- El registro dice la verdad cuando una playlist se queda sin tocar ----------
+  await monta(null, ['NS - House', 'NS - Techno']);
+  pl(P, 'NS - House').pistas.push({ added_at: '2026-11-24T10:00:00Z', t: D.cat.paper }); pl(P, 'NS - House').snapshot_id += 'm';
+  await confirma(x);
+  jr = registro(x);
+  es(!!jr && jr.final === 'terminada con playlists sin tocar' && jr.playlists[0].estado === 'cambiada' && jr.playlists[1].estado === 'ok', 'el registro no dice «completa» si una playlist se quedó sin tocar');
+  await x.ctx.close();
+
+  // ---------- Una sincronización que no llega a enviar nada también deja su registro (es el cierre de su testigo) ----------
+  await monta(null, ['NS - House']);
+  pl(P, 'NS - House').pistas.push({ added_at: '2026-11-24T10:00:00Z', t: D.cat.paper }); pl(P, 'NS - House').snapshot_id += 'm';
+  await confirma(x);
+  jr = registro(x);
+  es(x.mundo.escrituras.length === 0 && archivos(x, REGISTRO).length === 1 && !!jr && jr.playlists[0].estado === 'cambiada' && jr.playlists[0].anadidas.length === 0 && /terminada con 1 playlist sin tocar/.test(await resultado(x)),
+    'aunque no se envíe nada (la única playlist marcada había cambiado), queda el registro: sin él, las demás sesiones esperarían un cuarto de hora');
+  await x.ctx.close();
+  // ---------- Una sincronización larga en un dispositivo: el otro no puede empezar hasta que la primera cierre ----------
+  P = D.copiaBiblio();
+  x = await nuevo({ playlists: P, escritura: { espera: 6000 } });
+  await conectaTodo(x);
+  await simula(x.page);
+  y = await otroEn(x.mundo);
+  await conecta(y.page, 'Dropbox'); await conecta(y.page, 'Spotify');
+  await y.page.waitForFunction(() => /como Prueba/.test(document.body.innerText) && !!window.SS.estado.xml, null, { timeout: 15000 });
+  await simula(y.page);
+  await prepara(x); await marca(x, 'NS - Techno');
+  await prepara(y); await marca(y, 'NS - Techno');
+  await pulsaConfirmar(x);
+  for (let i = 0; i < 100 && x.mundo.escrituras.length < 1; i++) await x.page.waitForTimeout(100);
+  // como si la primera llevase ya dos minutos y medio sincronizando: su testigo es «viejo», pero no está cerrado
+  for (const a of x.mundo.archivos.values()) if (/^\/copias\/antes-de-sincronizar-/.test(a.ruta)) a.fecha = new Date(Date.now() - 150000).toISOString().replace(/\.\d+Z$/, 'Z');
+  await pulsaConfirmar(y);
+  await libre(y);
+  es(x.mundo.escrituras.length === 1 && await avisoDe(y, /Hay otra sincronización empezada hace menos de un cuarto de hora, en otra pestaña o en otro dispositivo, y no consta que haya terminado.*No se ha enviado nada a Spotify\./) === 1,
+    'con una sincronización que lleva más de dos minutos en marcha en otro dispositivo, este se retira sin escribir');
+  await libre(x);
+  es(techDe(P).pistas.length === 5 && new Set(uris(techDe(P))).size === 5 && /completa: añadidas 5 canciones/.test(await resultado(x)) && archivos(x, /^\/registro\/sincronizacion-/).length === 2, 'la primera termina bien, sin duplicados, y los dos testigos quedan cerrados');
+  x.mundo.opc.escritura = null;
+  await simula(y.page, 'Simular otra vez');
+  await prepara(y); await marca(y, 'OG - All');
+  await confirma(y);
+  es(x.mundo.escrituras.length === 2 && pl(P, 'OG - All').pistas.length === 4 && /completa: añadidas 2 canciones en 1 playlist/.test(await resultado(y)), 'y cuando la primera ha cerrado, el otro dispositivo ya puede sincronizar');
+  await y.ctx.close();
+  await x.ctx.close();
+
+  // ---------- Una pestaña con la sincronización preparada de antes no escribe tras una escritura dudosa hecha en otra ----------
+  P = D.copiaBiblio();
+  x = await nuevo({ playlists: P, escritura: { oculta: 3 } });
+  await conectaTodo(x);
+  await simula(x.page);
+  y = { mundo: x.mundo, ctx: x.ctx, page: await x.ctx.newPage(), consola: [] };
+  await y.page.goto(SITIO);
+  await y.page.waitForSelector('.cab');
+  await y.page.waitForFunction(() => !!window.SS.estado.xml && !!window.SS.estado.sp, null, { timeout: 15000 });
+  await simula(y.page);
+  await prepara(y); await marca(y, 'NS - Techno');
+  await prepara(x); await marca(x, 'NS - Techno');
+  await confirma(x);
+  es(x.mundo.escrituras.length === 1 && /no cuadra: de las 5 enviadas se ven 0/.test(await resultado(x)) && techDe(P).pistas.length === 5, 'en una pestaña, Spotify acepta la escritura y aún no la enseña: «se ven 0» (en Spotify están las 5)');
+  await confirma(y);
+  es(x.mundo.escrituras.length === 1 && techDe(P).pistas.length === 5 && await avisoDe(y, /Lo que se añadiría a «NS - Techno» ha cambiado desde que se preparó la sincronización.*No se ha enviado nada a Spotify\./) === 1,
+    'la otra pestaña, que la tenía preparada de antes, ve la marca y no escribe: no hay duplicados');
+  await pestana(y.page, 'Diagnóstico');
+  es(/Sincronización: [^\n]*parada\. Lo releído de «NS - Techno» no cuadra/.test(await y.page.locator('#diag').inputValue()), 'y su diagnóstico enseña la última sincronización hecha en este navegador, aunque fuese en la otra pestaña');
   await x.ctx.close();
 }
 
@@ -1092,14 +1566,14 @@ async function casosEscritura() {
   navegador = await chromium.launch(exe ? { executablePath: exe } : {});
   if (SALIDA) fs.mkdirSync(SALIDA, { recursive: true });
   try {
-    // SOLO=escritura pasa solo las pruebas de la escritura (un minuto en vez de varios); sin SOLO se pasa todo.
+    // SOLO=escritura pasa solo las pruebas de la sincronización (unos minutos menos); sin SOLO se pasa todo.
     if (process.env.SOLO !== 'escritura') {
       await flujoCompleto('Flujo completo en escritorio', { viewport: { width: 1100, height: 800 } }, '-pc');
       await flujoCompleto('Flujo completo emulando iPhone', Object.assign({}, devices['iPhone 14'], { defaultBrowserType: undefined }), '-iphone');
       await flujoCompleto('Flujo completo en modo oscuro', { viewport: { width: 900, height: 800 }, colorScheme: 'dark' }, '-oscuro');
       await casos();
     }
-    await casosEscritura();
+    await casosSinc();
   } catch (e) { mal++; console.log('  ERROR en las pruebas: ' + (e.stack || e)); }
   await navegador.close();
   console.log('Extremo a extremo: ' + ok + ' comprobaciones bien, ' + mal + ' mal.');

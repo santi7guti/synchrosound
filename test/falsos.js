@@ -29,12 +29,21 @@ class Mundo {
       // escritura: null = Spotify acepta las escrituras bien hechas. {estado, mensaje, cuota, red, llega}: responde con
       //   ese estado (429 con cuota = QUOTA_EXCEEDED), o con red:true corta la conexión; con llega:true la canción
       //   se añade igualmente (la escritura llegó aunque la respuesta diga otra cosa o no llegue).
+      //   Sin «estado» ni «red», la escritura se acepta (201) con estas variantes, para probar lo que la app comprueba
+      //   después: {parcial: n} solo añade las n primeras; {doble: true} las añade dos veces; {oculta: n} las n lecturas
+      //   siguientes de esa playlist aún enseñan lo de antes; {espera: ms} tarda en responder; {cuelga: true} la añade
+      //   y no responde nunca (como si la página se cerrase a mitad); {sinCuerpo: true} responde 201 sin cuerpo.
+      //   Con «llega», {oculta: n} vale también cuando la respuesta falla.
       escritura: null,
-      playlists: null,           // null = las comunes de datos.js; si no, una copia propia (D.conPrueba().playlists)
+      itemsFallaTrasEscribir: null, // un código (403…): tras la primera escritura, leer cualquier playlist falla con él
+      listaAtrasada: false,      // la lista de playlists sigue dando el sello y el total de antes de escribir
+      playlists: null,           // null = las comunes de datos.js; si no, una copia propia (D.copiaBiblio())
+      subidaFalla: null,         // expresión regular: las subidas a Dropbox cuya ruta la cumpla responden 400
       xml: D.xml(),
     }, opc || {});
     this.playlists = this.opc.playlists || D.playlists;
     this.escrituras = [];        // todo lo que llega a la API de Spotify y no es GET: {metodo, ruta, q, cuerpo, tipo}
+    this.eventos = [];           // en orden: 'sp GET /v1/…', 'sp POST /v1/…' y 'db sube /ruta' (para saber qué fue antes)
     this.scopeDe = new Map();    // token de Spotify -> permisos con los que se emitió
     this.scopeSp = '';           // permisos concedidos en la última autorización de Spotify
     this.peticiones = [];        // {host, metodo, ruta, q}
@@ -118,6 +127,7 @@ class Mundo {
     // ---- API de Spotify ----
     if (u.host === 'api.spotify.com') {
       const tok = (req.headers().authorization || '').replace(/^Bearer /, '');
+      if (metodo !== 'OPTIONS') this.eventos.push('sp ' + metodo + ' ' + u.pathname);
       if (metodo !== 'GET') {
         // Escrituras. Se apunta todo lo que llega; solo se atiende «añadir canciones a una playlist propia», con el permiso que toca.
         this.spotifyNoGet.push(metodo + ' ' + u.pathname);
@@ -140,8 +150,23 @@ class Mundo {
           pw.snapshot_id += 'w';
         };
         const esc = this.opc.escritura;
-        if (!esc) { aplica(); return json({ snapshot_id: pw.snapshot_id }, 201); }
-        if (esc.llega) aplica();
+        if (!esc || (esc.estado == null && !esc.red)) {
+          const viejas = pw.pistas.slice(), selloViejo = pw.snapshot_id;
+          if (esc && esc.parcial != null) uris = uris.slice(0, esc.parcial);
+          aplica();
+          if (esc && esc.doble) aplica();
+          if (esc && esc.oculta) pw.oculta = { n: esc.oculta, pistas: viejas, sirve: false };
+          if (this.opc.listaAtrasada && !pw.enLista) pw.enLista = { snapshot_id: selloViejo, total: viejas.length };
+          if (esc && esc.cuelga) return new Promise(() => {});
+          if (esc && esc.espera) await new Promise(r => setTimeout(r, esc.espera));
+          if (esc && esc.sinCuerpo) return ruta.fulfill({ status: 201, headers: CORS_SP, body: '' });
+          return json({ snapshot_id: pw.snapshot_id }, 201);
+        }
+        if (esc.llega) {
+          const viejas = pw.pistas.slice();
+          aplica();
+          if (esc.oculta) pw.oculta = { n: esc.oculta, pistas: viejas, sirve: false };
+        }
         if (esc.red) return ruta.abort('connectionreset');
         if (esc.estado === 429) {
           this.sp429++;
@@ -169,8 +194,8 @@ class Mundo {
       if (ruta_ === '/me') return json(D.YO);
       if (ruta_ === '/me/playlists') {
         return json(pagina(this.playlists, p => {
-          const o = { id: p.id, name: p.name, owner: p.owner, collaborative: p.collaborative, public: p.public, description: p.description, snapshot_id: p.snapshot_id, type: 'playlist', uri: 'spotify:playlist:' + p.id };
-          if (p.owner.id === D.YO.id) o.items = { href: 'https://api.spotify.com/v1/playlists/' + p.id + '/items', total: p.pistas.length };
+          const o = { id: p.id, name: p.name, owner: p.owner, collaborative: p.collaborative, public: p.public, description: p.description, snapshot_id: p.enLista ? p.enLista.snapshot_id : p.snapshot_id, type: 'playlist', uri: 'spotify:playlist:' + p.id };
+          if (p.owner.id === D.YO.id) o.items = { href: 'https://api.spotify.com/v1/playlists/' + p.id + '/items', total: p.enLista ? p.enLista.total : p.pistas.length };
           return o;
         }));
       }
@@ -180,6 +205,10 @@ class Mundo {
         if (!p) return json({ error: { status: 404, message: 'Not found' } }, 404);
         if (p.owner.id !== D.YO.id) return json({ error: { status: 403, message: 'Forbidden' } }, 403);
         this.itemsDe[p.id] = (this.itemsDe[p.id] || 0) + 1;
+        if (this.opc.itemsFallaTrasEscribir && this.escrituras.length) return json({ error: { status: this.opc.itemsFallaTrasEscribir, message: 'Forbidden' } }, this.opc.itemsFallaTrasEscribir);
+        // «oculta»: cada lectura completa (empieza en offset 0) gasta una de las que aún enseñan lo de antes
+        if (p.oculta && off === 0) { p.oculta.sirve = p.oculta.n > 0; if (p.oculta.sirve) p.oculta.n--; }
+        if (p.oculta && p.oculta.sirve) return json(pagina(p.oculta.pistas, e => ({ added_at: e.added_at, added_by: { id: D.YO.id }, is_local: false, item: e.t })));
         return json(pagina(p.pistas, e => ({ added_at: e.added_at, added_by: { id: D.YO.id }, is_local: false, item: e.t })));
       }
       if (/^\/playlists\/[^/]+\/tracks$/.test(ruta_)) return json({ error: { status: 403, message: 'Forbidden' } }, 403); // retirado en 2026
@@ -227,6 +256,7 @@ class Mundo {
         const texto = (req.postDataBuffer() || Buffer.alloc(0)).toString('utf8');
         const modo = typeof arg.mode === 'string' ? arg.mode : arg.mode['.tag'];
         let rutaF = arg.path;
+        if (this.opc.subidaFalla && this.opc.subidaFalla.test(rutaF)) return json({ error_summary: 'prueba/subida_rechazada/' }, 400);
         const ya = this.archivos.get(rutaF.toLowerCase());
         const conflicto = () => json({ error_summary: 'path/conflict/file/..', error: { '.tag': 'path', reason: { '.tag': 'conflict' } } }, 409);
         if (modo === 'add' && ya) {
@@ -237,6 +267,7 @@ class Mundo {
           rutaF = rutaF.slice(0, pt) + ' (' + n + ')' + rutaF.slice(pt);
         }
         if (modo === 'update' && (!ya || ya.rev !== arg.mode.update)) return conflicto();
+        this.eventos.push('db sube ' + rutaF);
         return json(this.meta(this.pon(rutaF, texto)));
       }
       return json({ error_summary: 'endpoint_no_previsto/' + ep }, 400);

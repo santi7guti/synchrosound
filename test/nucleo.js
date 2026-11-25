@@ -198,5 +198,103 @@ es(filas.find(f => clavePorId[f.id] === 's2').origenes.join('+') === 'Like+Try',
 es(filas.find(f => clavePorId[f.id] === 's1').origenes.join('+') === 'Down', 'origen Down');
 es(nombres[0] === 'like1', 'las más nuevas primero');
 
+// --- la puerta de escritura: qué playlists valen ---
+const plOk = n => ({ nombre: n, propia: true });
+['NS - House', 'OG - All', 'OG - Hard Techno / Techno ', 'NS - 2', 'OG - Others / Classics'].forEach(n => es(C.destinoMal(plOk(n), 1) === '', 'destino: «' + n + '» vale'));
+['ns - House', ' NS - House', 'NS -House', 'NS- House', 'NS – House', 'NS — House', 'NS - ', 'NS -  House', 'NS', 'XNS - House', 'ONS - x', 'NSFW - x', 'Sound All', 'VARIOS - Otra', 'PRUEBA', 'Mis NS - House', ''].forEach(n =>
+  es(/no empieza por «NS - » ni por «OG - »/.test(C.destinoMal(plOk(n), 1)), 'destino: «' + n + '» no vale por el nombre'));
+es(/no está en lo leído/.test(C.destinoMal(null, 1)), 'destino: una playlist que no se ha leído no vale');
+es(/no es tuya/.test(C.destinoMal({ nombre: 'NS - House', propia: false }, 1)) && /no es tuya/.test(C.destinoMal({ nombre: 'NS - House' }, 1)), 'destino: una playlist ajena (o sin saber de quién es) no vale');
+es(/no está en el mapa/.test(C.destinoMal(plOk('NS - House'), 0)) && /hay 2 playlists de rekordbox/.test(C.destinoMal(plOk('NS - House'), 2)) && C.destinoMal(plOk('NS - House'), undefined) !== '', 'destino: tiene que ser la pareja de una sola playlist de rekordbox');
+es(C.destinoMal({ nombre: 12, propia: true }, 1) !== '', 'destino: un nombre que no es texto no vale');
+
+// --- la puerta de escritura: qué llamadas salen ---
+const U = n => 'spotify:track:' + String(n).padStart(22, '0');
+const PL = 'p'.repeat(22), OTRA = 'q'.repeat(22);
+const permisoDe = c => Object.assign({ hasta: 2000, copia: '/copias/antes.json', pls: new Map([[PL, new Set([U(1), U(2), U(3)])]]), lotes: 2 }, c || {});
+const llamada = c => Object.assign({ metodo: 'POST', ruta: '/playlists/' + PL + '/items', cuerpo: { uris: [U(1), U(2)] }, pase: { id: PL, uris: [U(1), U(2)] },
+  permiso: permisoDe(), ahora: 1000, leida: 990, concedido: true, destino: () => '' }, c || {});
+let g = C.puerta(llamada());
+es(!g.no && g.ruta === '/playlists/' + PL + '/items' && g.uris.join() === [U(1), U(2)].join(), 'puerta: una llamada confirmada sale, con su ruta y sus canciones');
+let x = llamada();
+const desdeFuera = x.pase.uris;
+g = C.puerta(x);
+desdeFuera.push(U(3));
+es(g.uris.length === 2, 'puerta: lo que devuelve para enviar no cambia aunque quien llamó cambie su lista después');
+es(x.permiso.pls.get(PL).size === 1 && x.permiso.pls.get(PL).has(U(3)) && x.permiso.lotes === 1, 'puerta: al aprobar tacha las canciones enviadas y descuenta el lote');
+x.pase = { id: PL, uris: [U(1), U(2)] };
+es(/ya se envió/.test(C.puerta(x).no) && x.permiso.lotes === 1, 'puerta: la misma llamada, repetida, ya no sale');
+x.pase = { id: PL, uris: [U(2)] }; x.cuerpo = { uris: [U(2)] };
+es(/ya se envió/.test(C.puerta(x).no), 'puerta: tampoco una sola de las ya enviadas');
+x.pase = { id: PL, uris: [U(3)] }; x.cuerpo = { uris: [U(3)] };
+es(!C.puerta(x).no && x.permiso.pls.get(PL).size === 0 && x.permiso.lotes === 0, 'puerta: lo que quedaba por enviar sí sale, una vez');
+x.pase = { id: PL, uris: [U(3)] };
+es(!!C.puerta(x).no, 'puerta: y después ya no sale nada más');
+g = C.puerta(llamada({ ruta: { toString: () => '/playlists/' + PL + '/items' } }));
+es(!g.no && g.ruta === '/playlists/' + PL + '/items', 'puerta: la ruta que devuelve para enviar la escribe ella, no es la que trae quien llama');
+// la misma canción puede ir a dos playlists, una vez a cada una
+x = llamada({ permiso: permisoDe({ pls: new Map([[PL, new Set([U(1)])], [OTRA, new Set([U(1)])]]), lotes: 2 }), pase: { id: PL, uris: [U(1)] }, cuerpo: { uris: [U(1)] } });
+es(!C.puerta(x).no, 'puerta: una canción confirmada para dos playlists sale hacia la primera');
+x.pase = { id: OTRA, uris: [U(1)] }; x.ruta = '/playlists/' + OTRA + '/items';
+es(!C.puerta(x).no, 'puerta: y hacia la segunda');
+x.pase = { id: OTRA, uris: [U(1)] };
+es(!!C.puerta(x).no, 'puerta: pero no dos veces a la misma');
+// cien justas salen; ciento una no
+const cien = Array.from({ length: 100 }, (_, i) => U(i + 1)), ciento1 = cien.concat([U(101)]);
+es(!C.puerta(llamada({ permiso: permisoDe({ pls: new Map([[PL, new Set(ciento1)]]) }), pase: { id: PL, uris: cien }, cuerpo: { uris: cien } })).no, 'puerta: un lote de 100 canciones sale');
+const noSale = [
+  ['PUT', { metodo: 'PUT' }, /solo se permite añadir/],
+  ['DELETE', { metodo: 'DELETE' }, /solo se permite añadir/],
+  ['PATCH', { metodo: 'PATCH' }, /solo se permite añadir/],
+  ['post en minúsculas', { metodo: 'post' }, /solo se permite añadir/],
+  ['sin pase', { pase: null }, /falta la confirmación/],
+  ['pase sin playlist', { pase: { uris: [U(1), U(2)] } }, /falta la confirmación/],
+  ['sin el permiso de Spotify', { concedido: false }, /no ha concedido/],
+  ['permiso de Spotify dudoso', { concedido: 'sí' }, /no ha concedido/],
+  ['ruta con parámetros', { ruta: '/playlists/' + PL + '/items?position=0' }, /no es la llamada confirmada/],
+  ['ruta antigua /tracks', { ruta: '/playlists/' + PL + '/tracks' }, /no es la llamada confirmada/],
+  ['ruta de otra playlist', { ruta: '/playlists/' + OTRA + '/items' }, /no es la llamada confirmada/],
+  ['ruta de likes', { ruta: '/me/tracks' }, /no es la llamada confirmada/],
+  ['ruta de crear playlist', { ruta: '/me/playlists' }, /no es la llamada confirmada/],
+  ['ruta con algo detrás', { ruta: '/playlists/' + PL + '/items/' }, /no es la llamada confirmada/],
+  ['destino que no vale', { destino: () => 'el nombre de «X» no empieza por «NS - » ni por «OG - »' }, /no empieza por/],
+  ['destino sin respuesta', { destino: () => undefined }, /no se ha podido comprobar/],
+  ['sin forma de comprobar el destino', { destino: null }, /no se ha podido comprobar/],
+  ['sin sincronización confirmada', { permiso: null }, /ninguna sincronización confirmada/],
+  ['permiso caducado', { ahora: 2000 }, /ninguna sincronización confirmada/],
+  ['hora que no es un número', { ahora: NaN }, /ninguna sincronización confirmada/],
+  ['sin copia', { permiso: permisoDe({ copia: '' }) }, /no hay copia/],
+  ['sin lectura previa', { leida: undefined }, /no se ha releído/],
+  ['lectura previa de hace 15 s', { ahora: 1000, leida: 1000 - 15000 }, /no se ha releído/],
+  ['lectura previa de hace una hora', { ahora: 1000, leida: 1000 - 3600000 }, /no se ha releído/],
+  ['lectura previa con fecha futura', { leida: 1500 }, /no se ha releído/],
+  ['lectura previa que no es un número', { leida: 'ahora' }, /no se ha releído/],
+  ['playlist no confirmada', { permiso: permisoDe({ pls: new Map([[OTRA, new Set([U(1), U(2)])]]) }) }, /no está entre las confirmadas/],
+  ['lista de confirmadas rota', { permiso: permisoDe({ pls: {} }) }, /no está entre las confirmadas/],
+  ['sin lotes disponibles', { permiso: permisoDe({ lotes: 0 }) }, /todos los lotes/],
+  ['lote vacío', { pase: { id: PL, uris: [] }, cuerpo: { uris: [] } }, /entre 1 y 100/],
+  ['lote que no es una lista', { pase: { id: PL, uris: U(1) }, cuerpo: { uris: U(1) } }, /entre 1 y 100/],
+  ['101 canciones', { permiso: permisoDe({ pls: new Map([[PL, new Set(ciento1)]]) }), pase: { id: PL, uris: ciento1 }, cuerpo: { uris: ciento1 } }, /entre 1 y 100/],
+  ['canción repetida en el lote', { pase: { id: PL, uris: [U(1), U(1)] }, cuerpo: { uris: [U(1), U(1)] } }, /repite/],
+  ['una canción sin confirmar', { pase: { id: PL, uris: [U(1), U(9)] }, cuerpo: { uris: [U(1), U(9)] } }, /no está confirmado/],
+  ['un episodio', { permiso: permisoDe({ pls: new Map([[PL, new Set(['spotify:episode:' + '0'.repeat(22)])]]) }), pase: { id: PL, uris: ['spotify:episode:' + '0'.repeat(22)] }, cuerpo: { uris: ['spotify:episode:' + '0'.repeat(22)] } }, /no está confirmado/],
+  ['un archivo local', { permiso: permisoDe({ pls: new Map([[PL, new Set(['spotify:local:a:b:c:100'])]]) }), pase: { id: PL, uris: ['spotify:local:a:b:c:100'] }, cuerpo: { uris: ['spotify:local:a:b:c:100'] } }, /no está confirmado/],
+  ['algo que no es texto', { pase: { id: PL, uris: [U(1), 7] }, cuerpo: { uris: [U(1), 7] } }, /no está confirmado/],
+  ['cuerpo con otras canciones', { cuerpo: { uris: [U(1), U(3)] } }, /el cuerpo no es/],
+  ['cuerpo en otro orden', { cuerpo: { uris: [U(2), U(1)] } }, /el cuerpo no es/],
+  ['cuerpo con una de más', { cuerpo: { uris: [U(1), U(2), U(3)] } }, /el cuerpo no es/],
+  ['cuerpo con position', { cuerpo: { uris: [U(1), U(2)], position: 0 } }, /el cuerpo no es/],
+  ['cuerpo sin canciones', { cuerpo: {} }, /el cuerpo no es/],
+  ['sin cuerpo', { cuerpo: null }, /el cuerpo no es/],
+];
+noSale.forEach(([nombre, cambios, motivo]) => {
+  const y = llamada(cambios), antes = y.permiso && y.permiso.pls instanceof Map ? JSON.stringify(Array.from(y.permiso.pls).map(([k, v]) => [k, Array.from(v)])) + y.permiso.lotes : '';
+  const r = C.puerta(y);
+  const despues = y.permiso && y.permiso.pls instanceof Map ? JSON.stringify(Array.from(y.permiso.pls).map(([k, v]) => [k, Array.from(v)])) + y.permiso.lotes : '';
+  es(!!r.no && motivo.test(r.no) && !r.ruta && !r.uris && antes === despues, 'puerta: no sale (' + nombre + ')' + (r.no ? '' : ' — HA SALIDO') + (r.no && !motivo.test(r.no) ? ' — motivo: ' + r.no : ''));
+});
+es(!C.puerta(llamada({ ahora: 100000, leida: 100000 - 14999, permiso: permisoDe({ hasta: 200000 }) })).no && !C.puerta(llamada({ leida: 1000 })).no, 'puerta: con la playlist releída hace menos de 15 s, sale');
+es(C.FRESCA_ESCR === 15000 && C.MAX_LOTE === 100 && C.URI_CANCION.test(U(1)) && !C.URI_CANCION.test(U(1) + 'x') && !C.URI_CANCION.test(' ' + U(1)), 'puerta: el tope es 100 y una canción es exactamente spotify:track: más 22 caracteres');
+
 console.log('Núcleo: ' + ok + ' comprobaciones bien, ' + mal + ' mal.');
 process.exit(mal ? 1 : 0);

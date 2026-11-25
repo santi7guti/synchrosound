@@ -127,19 +127,21 @@ const arbol = {
   },
   og: { 'ALL': ['cobalt', 'signal', 'tondo', 'silence'], 'Classics': ['signal'] },
 };
-function xml() {
+// «extra» = {pistas: [...], og: {nombre: [pistas]}}: canciones y playlists Old Gems de más, solo para ese XML.
+function xml(extra) {
+  const todas = rbPistas.concat((extra && extra.pistas) || []), og = Object.assign({}, arbol.og, (extra && extra.og) || {});
   const pl = (nombre, claves) => '      <NODE Name="' + esc(nombre) + '" Type="1" KeyType="0" Entries="' + claves.length + '">\r\n' +
-    claves.map(k => '        <TRACK Key="' + R[k].id + '"/>\r\n').join('') + '      </NODE>\r\n';
+    claves.map(k => '        <TRACK Key="' + (typeof k === 'string' ? R[k] : k).id + '"/>\r\n').join('') + '      </NODE>\r\n';
   return '<?xml version="1.0" encoding="UTF-8"?>\r\n\r\n<DJ_PLAYLISTS Version="1.0.0">\r\n' +
     '  <PRODUCT Name="rekordbox" Version="7.2.19" Company="AlphaTheta"/>\r\n' +
-    '  <COLLECTION Entries="' + rbPistas.length + '">\r\n' +
-    rbPistas.map(t => '    <TRACK TrackID="' + t.id + '" Name="' + esc(t.name) + '" Artist="' + esc(t.artist) + '" Composer="" Album="" Kind="' + t.kind +
+    '  <COLLECTION Entries="' + todas.length + '">\r\n' +
+    todas.map(t => '    <TRACK TrackID="' + t.id + '" Name="' + esc(t.name) + '" Artist="' + esc(t.artist) + '" Composer="" Album="" Kind="' + t.kind +
       '" TotalTime="' + t.dur + '" DateAdded="2026-10-01" Comments="" Location="' + esc(t.loc) + '" Remixer="' + esc(t.remixer) + '" Label="" Mix="">\r\n' +
       '      <TEMPO Inizio="0.1" Bpm="130.00" Metro="4/4" Battito="1"/>\r\n    </TRACK>\r\n').join('') +
     '  </COLLECTION>\r\n  <PLAYLISTS>\r\n    <NODE Type="0" Name="ROOT" Count="4">\r\n' +
     '     <NODE Name="New School (From 01.25)" Type="0" Count="5">\r\n' +
     Object.keys(arbol.ns).map(n => pl(n, arbol.ns[n])).join('') +
-    '      <NODE Name="Old Gems" Type="0" Count="2">\r\n' + Object.keys(arbol.og).map(n => pl(n, arbol.og[n])).join('') + '      </NODE>\r\n' +
+    '      <NODE Name="Old Gems" Type="0" Count="' + Object.keys(og).length + '">\r\n' + Object.keys(og).map(n => pl(n, og[n])).join('') + '      </NODE>\r\n' +
     '     </NODE>\r\n' +
     '     <NODE Name="Otra Carpeta" Type="0" Count="1">\r\n' + pl('Viejas', ['vieja', 'glass']) + '     </NODE>\r\n' +
     pl('SUELTA', ['glass', 'vieja']) + pl('New School Todo (All)', ['glass']) +
@@ -175,13 +177,21 @@ const likes = [
   { added_at: '2026-10-17T09:00:00Z', t: cat.s2 },         // like y además Sound Try
 ].concat(relleno.slice(120, 190).map((t, i) => ({ added_at: '2026-07-' + String(1 + (i % 27)).padStart(2, '0') + 'T08:00:00Z', t })));
 
-// Para las pruebas de escritura: la misma biblioteca en copia aparte (lo que se escriba no toca los datos comunes),
-// con la playlist de la prueba. «otras» = playlists de más (p. ej. una segunda con el mismo nombre).
-function conPrueba(otras, cambios) {
-  const copia = playlists.map(p => Object.assign({}, p, { pistas: p.pistas.slice() }));
-  const prueba = playlist('PRUEBA PEGAR', [cat.lady, cat.perdon, cat.cumbia], Object.assign({ public: true }, cambios || {}));
-  return { playlists: copia.concat([prueba], otras || []), prueba };
+// Para las pruebas de sincronización: la misma biblioteca en copia aparte (lo que se escriba no toca los datos comunes).
+// «otras» = playlists de más; «cambios» = {nombre de playlist: propiedades que cambian}.
+function copiaBiblio(otras, cambios) {
+  return playlists.map(p => Object.assign({}, p, { pistas: p.pistas.slice() }, (cambios && cambios[p.name]) || {})).concat(otras || []);
 }
+// Y un XML con una playlist Old Gems de más, «Larga», con 130 canciones que están en la biblioteca de Spotify:
+// para probar que una playlist con más de 100 canciones por añadir se escribe en dos lotes.
+const largas = relleno.slice(0, 130).map((t, i) => ({ id: String(5000 + i), name: t.name, artist: t.artists[0].name, dur: t.duration_ms / 1000, kind: 'MP3 File', remixer: '', uri: t.uri,
+  loc: 'file://localhost/C:/Musica/Biblioteca/2026/26.11/' + encodeURIComponent(t.artists[0].name + ' - ' + t.name) + '.mp3' }));
+// En medio va otro archivo de una canción que ya está en la lista (dos archivos de rekordbox, una canción de Spotify):
+// tiene que añadirse una sola vez.
+const repetida = Object.assign({}, largas[3], { id: '5999', kind: 'AIFF File', loc: largas[3].loc.replace(/\.mp3$/, '%20(otra%20copia).aiff') });
+const xmlLargo = () => xml({ pistas: largas.concat([repetida]), og: { Larga: largas.slice(0, 50).concat([repetida], largas.slice(50)) } });
+// Lo que la sincronización tiene que añadir a la playlist de rekordbox «nombre» del grupo «ns» u «og», en su orden.
+const aAnadir = (grupo, nombre) => arbol[grupo][nombre].filter(k => esperado.add[k]).map(k => cat[esperado.add[k]].uri);
 
 // Qué tiene que salir de la simulación.
 const esperado = {
@@ -193,4 +203,4 @@ const esperado = {
   sinRepartir: ['like1', 's2', 's1'],
 };
 
-module.exports = { cat, catalogo, relleno, R, rbPistas, arbol, xml, YO, playlist, playlists, conPrueba, likes, esperado };
+module.exports = { cat, catalogo, relleno, R, rbPistas, arbol, xml, xmlLargo, largas, aAnadir, YO, playlist, playlists, copiaBiblio, likes, esperado };

@@ -1,5 +1,5 @@
 /* SynchroSound — núcleo.
-   Normalización de textos, lector del XML de rekordbox y buscador de coincidencias.
+   Normalización de textos, lector del XML de rekordbox, buscador de coincidencias y la puerta de escritura.
    Son funciones puras: aquí no hay red ni se toca Spotify, Dropbox ni el navegador. */
 (function (root, factory) {
   const api = factory();
@@ -590,7 +590,69 @@
     return Array.from(filas.values()).sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
   }
 
+  // ---------------- la puerta de escritura (fase 2) ----------------
+  /* Decide, sin red y sin estado propio, si una escritura puede salir hacia Spotify. Está aquí, como función pura,
+     para poder probarla caso a caso (test/nucleo.js). En app.js, spotify() no envía ninguna escritura que no
+     salga de puerta(): la ruta y las canciones que se envían son las que esta devuelve. */
+  const PREFIJO_DESTINO = /^(NS|OG) - \S/;   // el nombre tiene que empezar exactamente por «NS - » u «OG - »
+  const URI_CANCION = /^spotify:track:[A-Za-z0-9]{22}$/;
+  const MAX_LOTE = 100;                      // canciones por petición: el máximo que admite Spotify
+  const FRESCA_ESCR = 15000;                 // la playlist tiene que haberse releído de Spotify hace menos de esto (ms)
+  /* ¿Se puede escribir en esa playlist? pl = la playlist tal como se leyó de Spotify ({nombre, propia}) o null;
+     enMapa = cuántas playlists de rekordbox la tienen de pareja. Devuelve por qué no, o '' si se puede. */
+  function destinoMal(pl, enMapa) {
+    if (!pl) return 'esa playlist no está en lo leído de tu Spotify';
+    if (pl.propia !== true) return 'la playlist «' + pl.nombre + '» no es tuya';
+    if (typeof pl.nombre !== 'string' || !PREFIJO_DESTINO.test(pl.nombre)) return 'el nombre de «' + pl.nombre + '» no empieza por «NS - » ni por «OG - »';
+    if (enMapa !== 1) return enMapa > 1 ? 'hay ' + enMapa + ' playlists de rekordbox que apuntan a «' + pl.nombre + '»' : '«' + pl.nombre + '» no está en el mapa';
+    return '';
+  }
+  /* x = { metodo, ruta, cuerpo, pase, permiso, ahora, concedido, destino }:
+       pase      = el lote que se quiere enviar: {id, uris}. Vale para una llamada;
+       permiso   = lo confirmado por el usuario: {hasta, copia, pls: Map(id → Set(uris que aún pueden salir)), lotes};
+       leida     = cuándo se releyó de Spotify esa playlist por última vez (ms); ahora = la hora (ms);
+       concedido = true si Spotify ha concedido los dos permisos de escritura;
+       destino   = función(id) → por qué no se puede escribir en esa playlist, o '' (destinoMal con los datos de la app).
+     Solo sale POST /playlists/{id}/items, sin parámetros, a una playlist válida y confirmada, con entre 1 y 100
+     canciones sin repetir, todas confirmadas para esa playlist y ninguna enviada ya, y con la copia guardada. */
+  function porQueNoSale(x) {
+    const p = x.pase, per = x.permiso;
+    if (x.metodo !== 'POST') return 'solo se permite añadir (POST)';
+    if (!p || typeof p.id !== 'string') return 'falta la confirmación del usuario';
+    if (x.concedido !== true) return 'Spotify no ha concedido el permiso de escritura';
+    const m = /^\/playlists\/([A-Za-z0-9]{22})\/items$/.exec(String(x.ruta));
+    if (!m || m[1] !== p.id) return 'no es la llamada confirmada';
+    const mal = typeof x.destino === 'function' ? x.destino(p.id) : null;
+    if (mal !== '') return String(mal || 'no se ha podido comprobar la playlist de destino');
+    if (!per || !(x.ahora < per.hasta)) return 'no hay ninguna sincronización confirmada en curso';
+    if (!per.copia) return 'no hay copia guardada antes de escribir';
+    if (!(x.leida <= x.ahora && x.ahora - x.leida < FRESCA_ESCR)) return 'la playlist no se ha releído de Spotify justo antes de escribir';
+    const quedan = per.pls instanceof Map ? per.pls.get(p.id) : null;
+    if (!(quedan instanceof Set)) return 'esa playlist no está entre las confirmadas';
+    if (!(per.lotes >= 1)) return 'ya han salido todos los lotes confirmados';
+    const us = p.uris;
+    if (!Array.isArray(us) || us.length < 1 || us.length > MAX_LOTE) return 'el lote no tiene entre 1 y ' + MAX_LOTE + ' canciones';
+    if (new Set(us).size !== us.length) return 'el lote repite canciones';
+    if (!us.every(u => typeof u === 'string' && URI_CANCION.test(u) && quedan.has(u))) return 'el lote lleva algo que no está confirmado para esa playlist o que ya se envió';
+    const c = x.cuerpo;
+    if (!c || typeof c !== 'object' || Object.keys(c).length !== 1 || !Array.isArray(c.uris) || c.uris.length !== us.length ||
+        !c.uris.every((u, i) => u === us[i])) return 'el cuerpo no es exactamente el lote confirmado';
+    return '';
+  }
+  /* Devuelve {no: 'por qué no sale'} o {ruta, uris}: lo que hay que enviar, tal cual. AL APROBAR, GASTA: tacha del
+     permiso las canciones del lote y descuenta un lote. Así la misma llamada, repetida, ya no sale: una canción
+     no puede ir dos veces a la misma playlist dentro de una sincronización, llegue o no la primera. */
+  function puerta(x) {
+    const no = porQueNoSale(x);
+    if (no) return { no };
+    const quedan = x.permiso.pls.get(x.pase.id), uris = x.pase.uris.slice();
+    uris.forEach(u => quedan.delete(u));
+    x.permiso.lotes--;
+    return { ruta: '/playlists/' + x.pase.id + '/items', uris };
+  }
+
   return {
+    PREFIJO_DESTINO, URI_CANCION, MAX_LOTE, FRESCA_ESCR, destinoMal, puerta,
     MATCHER, norm, parecido, mmss, parseTitulo, descRb, descSp, minSp, claveCancion, puntua, elige, yaEsta, explica, cercanas, aspecto,
     consultas, consultaExtended, leeRekordbox, nombreDestino, propMapa, buscaPorNombre, sinRepartir,
   };
