@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SynchroSound · lector de Soundeo
 // @namespace    synchrosound
-// @version      1
-// @description  Lee tus favoritos y descargas de Soundeo cuando se lo pide SynchroSound. Solo lee.
+// @version      2
+// @description  Lee tus favoritos y descargas de Soundeo cuando se lo pide SynchroSound. Solo si tú lo tocas allí, quita la estrella de las canciones que SynchroSound te proponga. Nunca da estrellas ni descarga.
 // @match        https://soundeo.com/*
 // @match        https://www.soundeo.com/*
 // @run-at       document-start
@@ -11,15 +11,18 @@
 // ==/UserScript==
 
 // Este archivo se instala una sola vez. No hace nada mientras usas Soundeo: solo arranca cuando llegas desde
-// SynchroSound pulsando «Leer Soundeo», que pone una marca de un solo uso en la dirección. Entonces descarga
-// el lector (SRC), que lee tus favoritos y tus descargas y te devuelve a SynchroSound con la lista.
+// SynchroSound pulsando «Leer Soundeo» o «Ir a Soundeo a quitar ★», que ponen una marca de un solo uso en la
+// dirección. Entonces descarga el lector (SRC), que lee tus favoritos y tus descargas y te devuelve a SynchroSound
+// con la lista. Desde la versión 1.1.0 del lector, además, puede quitar la estrella de las canciones que SynchroSound
+// pida en esa marca, y solo de la que tú toques en su panel, una a una. Nunca da estrellas ni descarga.
 // No guarda nada en Soundeo, no conecta Dropbox y no toca Soundeo Feed.
+// (La versión 1 de este archivo hace exactamente lo mismo: solo cambian estos textos. No hace falta reinstalarlo.)
 (function () {
   'use strict';
   var m = /^#synchrosound=([A-Za-z0-9_-]{16,64})$/.exec(location.hash || '');
   if (!m) return; // uso normal de Soundeo: termina aquí, sin red ni pantalla
   if (window.top !== window.self || window.__SSYNC_LECTOR__) return;
-  window.__SSYNC_LECTOR__ = { marca: m[1], cargador: '1' };
+  window.__SSYNC_LECTOR__ = { marca: m[1], cargador: '2' };
 
   var SRC = 'https://santi7guti.github.io/synchrosound/userscript/synchrosound-lector.app.js';
 

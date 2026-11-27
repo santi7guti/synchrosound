@@ -783,6 +783,35 @@
     return { ruta: '/playlists/' + x.pase.id + '/items', uris, quita: true };
   }
   // ¿A cuál de las dos va, además de a Sound All? Descargada (o lo estuvo: nunca vuelve de Down a Try) → Down.
+  /* «Quitar ★»: los ids de las canciones viajan a Soundeo dentro de la marca de un solo uso (el cargador instalado solo
+     deja pasar «#synchrosound=» y de 16 a 64 letras de A-Za-z0-9_-). Forma: 16 letras o cifras al azar, «-q» y, por
+     cada canción, «-» y su identificador en base 36. sxMarcaQuita mete las que caben (SX_MAX_QUITA como mucho) y
+     sxIdsDeMarca dice cuáles lleva una marca; el lector tiene su propia copia de esta segunda (una prueba las compara). */
+  const SX_MAX_QUITA = 6;
+  function sxMarcaQuita(base, ids) {
+    if (typeof base !== 'string' || !/^[A-Za-z0-9]{16}$/.test(base) || !Array.isArray(ids) || !ids.length) return null;
+    const vistos = new Set();
+    let m = base + '-q', n = 0;
+    for (const id of ids) {
+      if (!Number.isSafeInteger(id) || id <= 0 || vistos.has(id)) return null;
+      const t = id.toString(36);
+      if (t.length > 8) return null;
+      if (n >= SX_MAX_QUITA || m.length + 1 + t.length > 64) break;
+      vistos.add(id); m += '-' + t; n++;
+    }
+    return n ? m : null;
+  }
+  function sxIdsDeMarca(marca) {
+    const m = /^[A-Za-z0-9]{16}-q((?:-[0-9a-z]{1,8}){1,7})$/.exec(String(marca || ''));
+    if (!m) return [];
+    const ids = [];
+    for (const t of m[1].slice(1).split('-')) {
+      const n = parseInt(t, 36);
+      if (!Number.isSafeInteger(n) || n <= 0 || n.toString(36) !== t || ids.indexOf(n) >= 0) return [];
+      ids.push(n);
+    }
+    return ids;
+  }
   function sxDestino(descargada, apunte) { return descargada || (apunte && apunte.d) ? 'down' : 'try'; }
   /* Qué habría que hacer en las tres playlists. Función pura: no sabe de red ni de pantalla, y todo lo calcula
      por canción de Spotify, no por favorito (dos favoritos pueden ser la misma canción).
@@ -864,6 +893,6 @@
     MATCHER, norm, parecido, mmss, parseTitulo, descRb, descSp, minSp, claveCancion, puntua, elige, yaEsta, explica, cercanas, aspecto,
     consultas, consultaExtended, leeRekordbox, nombreDestino, propMapa, buscaPorNombre, sinRepartir,
     SX_VERSION, sxSuma, sxValida, sxMotivos, sxDescargadas, sxPista,
-    SX_PAPELES, SX_ORDEN, destinoSxMal, porQueNoQuita, puertaQuita, sxDestino, sxPlan,
+    SX_PAPELES, SX_ORDEN, SX_MAX_QUITA, sxMarcaQuita, sxIdsDeMarca, destinoSxMal, porQueNoQuita, puertaQuita, sxDestino, sxPlan,
   };
 });

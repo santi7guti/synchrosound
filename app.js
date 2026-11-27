@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.5.0';
+  const VERSION = '0.6.0';
   const C = window.SSCore;
 
   const CFG = {
@@ -96,7 +96,7 @@
     mem: null, memRev: null, memLista: false,
     cache: null, cacheSucia: false,
     sim: null, simFiltro: 'add', abiertas: {},
-    sx: null, sxMirado: false, sxLlegada: ls.get('ss.sx.llegada'), simB: null, simBFiltro: 'add', planB: null, planBVer: null, manoAyuda: false,
+    sx: null, sxMirado: false, sxLlegada: ls.get('ss.sx.llegada'), sxViaje: ls.get('ss.sx.viaje'), simB: null, simBFiltro: 'add', planB: null, planBVer: null, manoAyuda: false,
     c: null, cOcultas: false,
     copias: null, ultimaCopia: null,
     tarea: null, parar: false, candado: false,
@@ -1207,10 +1207,55 @@
     return m;
   }
   // «Leer Soundeo»: apunta una marca de un solo uso y abre Soundeo con ella. Allí el lector lee y devuelve la lista.
+  const LETRAS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  function letrasAlAzar(n) { const a = new Uint8Array(n); crypto.getRandomValues(a); return Array.from(a, x => LETRAS[x % LETRAS.length]).join(''); }
   async function leerSoundeo() {
-    const n = alAzar(16);
+    const n = letrasAlAzar(22); // solo letras y cifras: nunca puede leerse como una marca de «quitar ★»
     if (!ls.set('ss.sx.pide', { n, t: Date.now() })) { aviso('Este navegador no deja guardar la marca de la lectura (¿navegación privada?).', 'error'); return; }
     // Se sale de la página: lo que la memoria tuviera pendiente de guardar en Dropbox se guarda antes.
+    if (memSucia) { clearTimeout(memReloj); try { await memGuarda(); } catch (e) { /* memGuarda ya avisa */ } }
+    location.href = SX_ENTRADA + '#synchrosound=' + n;
+  }
+  /* «Quitar ★». En «Quitadas a mano» se marca el favorito (apunte «est» en su entrada del registro, en la memoria común:
+     se puede marcar en el PC y quitar en el iPhone). La estrella se quita en Soundeo, en el iPhone: «Ir a Soundeo a
+     quitar ★» abre Soundeo con una marca de un solo uso que lleva los ids, y allí el lector los enseña con su nombre y
+     quita la de la canción que él toque, una a una. La app no toca Soundeo de ninguna otra forma. */
+  const sxFavIds = () => new Set(S.sx ? S.sx.lista.fav.map(f => f[0]) : []);
+  // Los marcados que siguen siendo favoritos en la última lista (los demás ya no tienen estrella que quitar).
+  function sxMarcadas() {
+    if (!S.sx || !S.mem) return [];
+    const M = S.mem.sx || {}, out = [];
+    S.sx.lista.fav.forEach(f => { const r = M[String(f[0])]; if (r && typeof r === 'object' && r.est) out.push({ id: f[0], texto: f[1] }); });
+    return out;
+  }
+  async function marcaEstrella(id, texto, si) {
+    if (!S.db || !S.mem) throw new Error('Conecta Dropbox en Cuentas.');
+    await memCarga(); // sobre lo último de la memoria común
+    const k = String(id), r = S.mem.sx[k] && typeof S.mem.sx[k] === 'object' ? JSON.parse(JSON.stringify(S.mem.sx[k])) : { p: {} };
+    if (!r.p || typeof r.p !== 'object') r.p = {};
+    if (si) { r.est = 1; if (texto && !r.n) r.n = texto; } else delete r.est;
+    r.t = Date.now();
+    S.mem.sx[k] = r;
+    sxGuardaLocal();
+    memToca();
+  }
+  // Con una lista completa delante: la marca «est» de lo que ya no es favorito sobra (si no, volvería a salir si un día le da la estrella otra vez).
+  function sxLimpiaEst() {
+    if (!S.sx || !S.mem || C.sxMotivos(S.sx.lista).length) return 0;
+    const fav = sxFavIds(), M = S.mem.sx || {};
+    let n = 0;
+    Object.keys(M).forEach(k => {
+      const r = M[k];
+      if (r && typeof r === 'object' && r.est && !fav.has(Number(k))) { const c = JSON.parse(JSON.stringify(r)); delete c.est; c.t = Date.now(); M[k] = c; n++; }
+    });
+    if (n) { sxGuardaLocal(); memToca(); }
+    return n;
+  }
+  async function irAQuitarEstrellas() {
+    const todas = sxMarcadas().map(x => x.id);
+    const n = C.sxMarcaQuita(letrasAlAzar(16), todas), q = n ? C.sxIdsDeMarca(n) : [];
+    if (!n || !q.length || !/^[A-Za-z0-9_-]{16,64}$/.test(n)) { aviso('No hay ninguna canción marcada para quitarle la estrella.', 'error'); return; }
+    if (!ls.set('ss.sx.pide', { n, t: Date.now(), q })) { aviso('Este navegador no deja guardar la marca del viaje (¿navegación privada?).', 'error'); return; }
     if (memSucia) { clearTimeout(memReloj); try { await memGuarda(); } catch (e) { /* memGuarda ya avisa */ } }
     location.href = SX_ENTRADA + '#synchrosound=' + n;
   }
@@ -1256,6 +1301,21 @@
     ls.set('ss.sx.llegada', S.sxLlegada);
     S.vista = 'b'; ls.set('ss.vista', 'b');
     aviso('Lista de Soundeo recibida: ' + textoLista(v.lista) + '.');
+    // Si el viaje era para quitar estrellas: de las pedidas, cuáles ya no vienen en la lista (solo se sabe con una lista completa).
+    const q = Array.isArray(pide.q) ? pide.q.filter(id => Number.isSafeInteger(id) && id > 0).slice(0, 7) : [];
+    if (q.length && JSON.stringify(C.sxIdsDeMarca(pide.n)) === JSON.stringify(q)) {
+      const dentro = new Set(v.lista.fav.map(f => f[0])), completa = C.sxMotivos(v.lista).length === 0;
+      const viaje = { t: Date.now(), pedidas: q.length, completa, quitadas: completa ? q.filter(id => !dentro.has(id)).length : 0, siguen: q.filter(id => dentro.has(id)).length };
+      S.sxViaje = viaje; ls.set('ss.sx.viaje', viaje);
+      aviso(textoViaje(viaje), viaje.completa && viaje.quitadas ? undefined : 'error');
+    }
+  }
+  const cancs = n => n + (n === 1 ? ' canción' : ' canciones');
+  function textoViaje(v) {
+    if (!v.completa) return 'Viaje a Soundeo para quitar ★ (' + cancs(v.pedidas) + '): la lista ha vuelto incompleta, así que no se puede saber cuáles han perdido la estrella. Lee Soundeo otra vez.';
+    return 'Viaje a Soundeo para quitar ★: de ' + cancs(v.pedidas) + ', ' + (v.quitadas === 1 ? '1 ya no es favorita' : v.quitadas + ' ya no son favoritas') +
+      (v.siguen ? ' y ' + (v.siguen === 1 ? '1 sigue siéndolo' : v.siguen + ' siguen siéndolo') : '') + '.' +
+      (v.quitadas ? ' Simula: saldrán para quitar de las playlists donde sigan.' : '');
   }
   const nombreLista = t => { const d = new Date(t); return 'soundeo-' + d.getFullYear() + dos(d.getMonth() + 1) + dos(d.getDate()) + '-' + dos(d.getHours()) + dos(d.getMinutes()) + dos(d.getSeconds()) + '.json'; };
   // La lista recién llegada se guarda como archivo nuevo (nunca pisa otro): cada lectura queda como copia de sus favoritos.
@@ -1292,7 +1352,7 @@
     if (!S.db || sxMirando || S.tarea || (S.sxMirado && !aposta && !S.sxLlegada)) return;
     sxMirando = true;
     (async () => {
-      try { await aseguraMem(); if (!(S.sxLlegada && await sxGuardaLlegada())) await sxCarga(); }
+      try { await aseguraMem(); if (!(S.sxLlegada && await sxGuardaLlegada())) await sxCarga(); sxLimpiaEst(); }
       catch (e) { S.sxMirado = true; falla(e, 'La lista de Soundeo en Dropbox'); }
       finally { sxMirando = false; pinta(); }
     })();
@@ -1316,6 +1376,7 @@
     while (sxMirando) await espera(100); // si ya se estaba guardando o mirando, se espera: así no se guarda dos veces
     if (!(S.sxLlegada && await sxGuardaLlegada())) await sxCarga();
     if (!S.sx) throw new Error('Todavía no hay ninguna lista de Soundeo. Pulsa «Leer Soundeo» en el iPhone.');
+    sxLimpiaEst();
     if (!S.lib || fresca || S.lib.vieja || Date.now() - S.lib.leida > 15 * 60000) await leeBiblioteca(prog);
     prog('Preparando…');
     await cacheCarga();
@@ -2130,7 +2191,7 @@
   function diagnostico() {
     const L = [];
     const p = s => L.push(s);
-    p('SynchroSound ' + VERSION + ' — añade a «NS -» y «OG -»; añade y quita en Sound All, Sound Down y Sound Try; todo con confirmación — buscador v' + C.MATCHER);
+    p('SynchroSound ' + VERSION + ' — añade a «NS -» y «OG -»; añade y quita en Sound All, Sound Down y Sound Try; todo con confirmación; en Soundeo solo quita la ★ que toques allí — buscador v' + C.MATCHER);
     p('Fecha: ' + new Date().toISOString());
     p('Navegador: ' + navigator.userAgent);
     p('Dropbox: ' + (S.db ? 'conectado; permisos: ' + (S.db.scope || '(no informados)') : 'sin conectar'));
@@ -2215,6 +2276,10 @@
       p('Soundeo: lista ' + S.sx.ruta + ', leída el ' + fechaHora(l.t) + ' (lector ' + (l.lector || '?') + '): ' + textoLista(l) + '; sin publicar ' + l.fav.filter(f => f[3] === 2).length +
         '; en «Mis descargas» ' + l.dow.length + '; páginas ' + l.pag.join('+') + '; ' + (av.length ? 'AVISOS: ' + av.join('; ') : 'completa'));
     } else p('Soundeo: ' + (S.sxLlegada ? 'lista recibida sin guardar' : S.sxMirado ? 'sin ninguna lista en Dropbox' : 'sin mirar'));
+    {
+      const marc = sxMarcadas(), v = S.sxViaje && typeof S.sxViaje.t === 'number' ? S.sxViaje : null;
+      p('Quitar ★: marcadas ' + marc.length + (v ? '; último viaje ' + fechaHora(v.t) + ': pedidas ' + v.pedidas + (v.completa ? ', ya no son favoritas ' + v.quitadas + ', siguen ' + v.siguen : ', la lista volvió incompleta') : '; ningún viaje desde este navegador'));
+    }
     if (S.simB) {
       const c = cuenta(S.simB), f = porPlaylistB(S.simB), pl = soundeoActual();
       p('Simulación B ' + fechaHora(S.simB.fecha) + (S.simB.incompleta ? ' [INCOMPLETA ' + S.simB.hechas + '/' + S.simB.unicas.length + ']' : '') + ': favoritos ' + S.simB.unicas.length + '; ya están ' + c.ya + '; se añadirían ' + c.add + '; dudosas ' + c.duda + '; no están ' + c.no + (c.pend ? '; sin buscar por el tope ' + c.pend : ''));
@@ -2407,7 +2472,7 @@
         h('p', { class: 'estado' }, S.mem ? 'Hoy llevas ' + usoDe(hoy()).busq + ' de ' + topeBusq() + '.' : 'Conecta Dropbox para poder cambiarlo: el ajuste se guarda en la memoria común.')),
       h('section', { class: 'bloque' },
         h('h2', null, 'Soundeo y SoundCloud'),
-        h('p', { class: 'nota' }, 'Soundeo no tiene conexión para apps. Tus favoritos (★) y tus descargas los lee un lector pequeño que se instala una vez en el iPhone, en Safari con la extensión Userscripts (la misma de Soundeo Feed). Solo lee, y solo cuando pulsas «Leer Soundeo» en la pestaña B: mientras usas Soundeo no hace nada.'),
+        h('p', { class: 'nota' }, 'Soundeo no tiene conexión para apps. Tus favoritos (★) y tus descargas los lee un lector pequeño que se instala una vez en el iPhone, en Safari con la extensión Userscripts (la misma de Soundeo Feed). Solo arranca cuando llegas a Soundeo desde la pestaña B, con «Leer Soundeo» o con «Ir a Soundeo a quitar ★»: mientras usas Soundeo no hace nada. Lee tus favoritos y tus descargas; lo único que puede cambiar allí es quitar la estrella de las canciones que marques aquí, y solo de la que toques en su panel, una a una. Nunca da estrellas ni descarga.'),
         h('p', null, h('a', { href: SX_LECTOR, id: 'sx-instalar', target: '_blank', rel: 'noopener noreferrer' }, 'Instalar el lector de Soundeo')),
         h('p', { class: 'nota' }, 'SoundCloud no se puede conectar: su API no lo permite.')),
     ];
@@ -2628,13 +2693,13 @@
     const out = [], L = S.sx && S.sx.lista, av = L ? sxAvisos(L) : [];
     out.push(h('section', { class: 'bloque' },
       h('h2', null, 'Soundeo a Spotify: simular'),
-      h('p', { class: 'nota' }, 'Tus favoritos (★) de Soundeo que estén en Spotify van a «Sound All» y, además, a «Sound Down» si ya los descargaste o a «Sound Try» si no. Simular no cambia nada en Spotify, y en Soundeo la app solo lee.'),
+      h('p', { class: 'nota' }, 'Tus favoritos (★) de Soundeo que estén en Spotify van a «Sound All» y, además, a «Sound Down» si ya los descargaste o a «Sound Try» si no. Simular no cambia nada en Spotify, y en Soundeo la app solo lee (lo único que puede cambiar allí es quitar la estrella de una canción, y solo de la que tú toques en Soundeo).'),
       !listo && h('p', { class: 'estado mal' }, 'Falta: ' + [!S.db && 'conectar Dropbox', !S.sp && 'conectar Spotify'].filter(Boolean).join(', ') + '. Se hace en Cuentas.'),
       S.sxLlegada && h('p', { class: 'estado mal', id: 'sx-llegada' }, 'Hay una lista recién leída (' + textoLista(S.sxLlegada.lista) + ') sin guardar en Dropbox.' + (S.db ? ' Guardándola…' : ' Conecta Dropbox en Cuentas para guardarla.')),
       L ? h('p', { class: 'estado', id: 'sx-lista' }, 'Favoritos de Soundeo leídos el ' + fechaHora(L.t) + ': ' + textoLista(L) + '.' + (S.lib ? ' Spotify leído el ' + fechaHora(S.lib.leida) + '.' : ''))
         : S.db && !S.sxLlegada && h('p', { class: 'estado', id: 'sx-lista' }, S.sxMirado ? 'Todavía no hay ninguna lista de Soundeo guardada.' : 'Mirando en Dropbox si hay una lista de Soundeo…'),
       av.length > 0 && h('p', { class: 'estado mal', id: 'sx-avisos' }, 'Ojo con esta lista: ' + av.join('; ') + '. Para simular y para añadir sirve; con una lista así la app no propone quitar nada.'),
-      h('p', { class: 'nota' }, 'La lista se lee en el iPhone. «Leer Soundeo» abre Soundeo en esta pestaña; allí el lector lee tus favoritos y tus descargas (solo lee) y te devuelve aquí con la lista, que se guarda en Dropbox para todos tus dispositivos. El lector se instala una vez, desde Cuentas.'),
+      h('p', { class: 'nota' }, 'La lista se lee en el iPhone. «Leer Soundeo» abre Soundeo en esta pestaña; allí el lector lee tus favoritos y tus descargas (en ese viaje solo lee) y te devuelve aquí con la lista, que se guarda en Dropbox para todos tus dispositivos. El lector se instala una vez, desde Cuentas.'),
       listo && h('p', { class: 'nota', id: 'busq-hoy-b' }, 'Búsquedas nuevas en Spotify hoy: ' + usoDe(hoy()).busq + ' de ' + topeBusq() + ' como mucho. El tope se cambia en Cuentas.'),
       bandaCorte(),
       h('div', { class: 'acciones' },
@@ -2642,11 +2707,27 @@
         S.lib && boton('Simular leyendo Spotify de nuevo', () => tarea('Simular Soundeo', p => simulaB(p, true)), 'sec', !listo || !(L || S.sxLlegada)),
         boton('Leer Soundeo', leerSoundeo, 'sec', !S.db),
         S.db && boton('Mirar en Dropbox', () => sxMira(true), 'sec'))));
+    { const e = S.mem && bloqueEstrellas(); if (e) out.push(e); }
     out.push(bloqueSincB());
     if (S.lib && S.mem) out.push(bloqueMapaSoundeo(S.simB ? porPlaylistB(S.simB) : null));
     if (S.simB) { const m = bloqueMano(S.simB); if (m) out.push(m); }
     if (S.simB) out.push(bloqueLista(S.simB, 'simBFiltro', true));
     return out;
+  }
+  // ---- B: quitar estrellas en Soundeo ----
+  function bloqueEstrellas() {
+    const marc = sxMarcadas(), v = S.sxViaje && typeof S.sxViaje.t === 'number' && typeof S.sxViaje.pedidas === 'number' ? S.sxViaje : null;
+    if (!marc.length && !v) return null;
+    const van = Math.min(marc.length, C.SX_MAX_QUITA);
+    return h('section', { class: 'bloque', id: 'sx-estrellas' },
+      h('h2', null, 'Quitar ★ en Soundeo'),
+      h('p', { class: 'nota' }, 'Los favoritos que has marcado con «Quitar ★» en «Quitadas a mano». La estrella se quita en Soundeo, en el iPhone (donde está el lector): el botón te lleva allí y el lector te enseña estas canciones con su nombre; la estrella solo se le quita a la que toques allí, una a una. La app nunca da estrellas, no descarga y no toca nada más de Soundeo.'),
+      v && h('p', { class: 'estado' + (v.completa && v.quitadas ? '' : ' mal'), id: 'sx-viaje' }, 'Último viaje (' + fechaHora(v.t) + '): ' + textoViaje(v).replace(/^Viaje a Soundeo para quitar ★( \([^)]*\))?: /, '')),
+      marc.length > 0 && h('ul', { class: 'lista', id: 'sx-marcadas' }, marc.map(m => h('li', { class: 'fila' }, h('div', { class: 'fila-cuerpo' },
+        h('div', { class: 'fila-titulo' }, m.texto),
+        h('div', { class: 'fila-acc' }, boton('Desmarcar', () => tarea('Desmarcar ★', () => marcaEstrella(m.id, m.texto, false)), 'mini sec')))))),
+      marc.length > C.SX_MAX_QUITA && h('p', { class: 'estado' }, 'En cada viaje caben ' + C.SX_MAX_QUITA + ': irán las ' + C.SX_MAX_QUITA + ' primeras y las demás, en otro viaje.'),
+      marc.length > 0 && h('div', { class: 'acciones' }, boton('Ir a Soundeo a quitar ★ (' + van + ')', irAQuitarEstrellas, '', !S.db)));
   }
   // ---- B: sincronizar ----
   function bloqueSincB() {
@@ -2731,13 +2812,14 @@
   const AYUDA_MANO = {
     noes: '«No es»: la app emparejó mal. Conservas la estrella en Soundeo; esa canción de Spotify queda descartada para este favorito, la app busca otra pareja y, si la descartada sigue en otra de las tres playlists, te propondrá quitarla.',
     asi: '«Dejarla así»: la pareja era buena, pero no la quieres en esa playlist. Conservas la estrella, la canción no vuelve a esa playlist y no se te pregunta más.',
-    estrella: '«Quitar ★»: ya no te gusta. Quitará la estrella en Soundeo y la canción saldrá de las tres playlists. Llega en la próxima versión; mientras tanto, quita la estrella a mano en Soundeo y vuelve a leerlo.',
+    estrella: '«Quitar ★»: ya no te gusta. Aquí solo se marca; la estrella se quita en Soundeo, en el iPhone, con «Ir a Soundeo a quitar ★» (más arriba), tocándola allí. Después, al simular, la canción sale para quitar de las otras playlists de Soundeo donde siga.',
   };
   function bloqueMano(sim) {
     const filas = [];
     sim.unicas.forEach(u => u.destinos.forEach(d => { if (d.mano) filas.push({ u, d }); }));
     if (!filas.length) return null;
     const abiertas = filas.filter(x => !x.d.asi), calladas = filas.filter(x => x.d.asi);
+    const conEst = u => { const r = S.mem && S.mem.sx[String(u.sx.id)]; return !!(r && r.est); };
     const bt = (texto, ayuda, fn) => h('button', { class: 'btn mini sec', type: 'button', title: ayuda, disabled: !fn || !!S.tarea, onclick: fn || null }, texto);
     return h('section', { class: 'bloque', id: 'sx-mano' },
       h('h2', null, 'Quitadas a mano'),
@@ -2749,10 +2831,12 @@
         return h('li', { class: 'fila cat-pend' }, h('div', { class: 'fila-cuerpo' },
           h('div', { class: 'fila-titulo' }, lineaRb(u.rb), h('span', { class: 'dur' }, C.mmss(u.rb.dur))),
           h('div', { class: 'fila-sub' }, 'La quitaste de ' + d.nombre + (sp ? ': ' + lineaSp(sp.m) : '') + '.'),
+          conEst(u) && h('div', { class: 'fila-nota mano-est' }, 'Marcada para quitarle la ★. Se quita en Soundeo, en el iPhone: «Ir a Soundeo a quitar ★», más arriba.'),
           h('div', { class: 'fila-acc' },
             bt('No es', AYUDA_MANO.noes, sp ? () => descarta(u, sp) : null),
             bt('Dejarla así', AYUDA_MANO.asi, () => tarea('Dejarla así', () => dejaAsi(u, d, true))),
-            bt('Quitar ★', AYUDA_MANO.estrella, null))));
+            conEst(u) ? bt('Desmarcar ★', 'Deja de estar marcada: conserva su estrella en Soundeo.', () => tarea('Desmarcar ★', () => marcaEstrella(u.sx.id, u.sx.texto, false)))
+              : bt('Quitar ★', AYUDA_MANO.estrella, () => tarea('Quitar ★', () => marcaEstrella(u.sx.id, u.sx.texto, true))))));
       })),
       calladas.length > 0 && h('p', { class: 'estado', id: 'mano-asi' }, 'Dejadas así (no vuelven y no se pregunta más): ' + calladas.length + '.'),
       calladas.length > 0 && S.manoAyuda && h('ul', { class: 'lista' }, calladas.map(({ u, d }) => h('li', { class: 'fila' }, h('div', { class: 'fila-cuerpo' },

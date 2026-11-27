@@ -47,10 +47,16 @@ class Mundo {
       // soundeo: el Soundeo de mentira (ver sxPagina). {sesion, fav, dow, porPagina, filtros, falla}:
       //   fav = [{id, texto, dur, estado}] (estado 0 sin descargar, 1 descargada, 2 sin publicar); dow = [ids];
       //   filtros: 'fav' | 'dow' = esa lista llega con un filtro puesto; falla: {lista, pagina, estado} = esa página responde así.
+      //   favor: cómo responde la llamada de la estrella (POST /tracks/favor/<id>, un interruptor: quita si la tiene, da si no).
+      //     null = bien. {rechaza: 'mensaje'} = success false; {estado: n} = ese error HTTP; {red: true} = se corta;
+      //     {llega: true} (con estado o red) = aun así el cambio se hace; {noJson: true} = hace el cambio y responde HTML;
+      //     {sinEfecto: true} = dice que sí y no cambia nada; {carrera: true} = justo antes alguien le quitó la estrella.
       soundeo: null,
     }, opc || {});
-    this.sx = Object.assign({ sesion: true, fav: D.sxFav, dow: D.sxDow, porPagina: 100, filtros: null, falla: null }, this.opc.soundeo || {});
+    this.sx = Object.assign({ sesion: true, fav: D.sxFav, dow: D.sxDow, porPagina: 100, filtros: null, falla: null, favor: null }, this.opc.soundeo || {});
+    this.sx.fav = this.sx.fav.slice(); // copia propia: la llamada de la estrella la cambia
     this.sxPet = [];             // todo lo que llega a soundeo.com: 'GET /account/favorites?page=2'
+    this.sxFavor = [];           // cada llamada de la estrella: {id, antes (tenía estrella), cab: {xrw, tipo}, cuerpo}
     this.playlists = this.opc.playlists || D.playlists;
     this.escrituras = [];        // todo lo que llega a la API de Spotify y no es GET: {metodo, ruta, q, cuerpo, tipo}
     this.eventos = [];           // en orden: 'sp GET /v1/…', 'sp POST /v1/…' y 'db sube /ruta' (para saber qué fue antes)
@@ -139,7 +145,29 @@ class Mundo {
       this.sxPet.push(metodo + ' ' + u.pathname + u.search);
       const html = (cuerpo, estado) => ruta.fulfill({ status: estado || 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: cuerpo });
       const m = /^\/account\/(favorites|downloads)$/.exec(u.pathname);
-      if (metodo !== 'GET') return json({ success: true, result: 'favored' }); // si algo que no es leer llegase aquí, queda apuntado en sxPet
+      const mf = /^\/tracks\/favor\/(\d+)$/.exec(u.pathname);
+      if (metodo === 'POST' && mf && !u.search) {
+        const id = Number(mf[1]), F = this.sx.favor || {}, X = this.sx;
+        const tiene = () => X.fav.some(f => f.id === id);
+        const cab = req.headers();
+        this.sxFavor.push({ id, antes: tiene(), cab: { xrw: cab['x-requested-with'] || '', tipo: cab['content-type'] || '' }, cuerpo: req.postData() || '' });
+        // el interruptor de Soundeo: si tiene estrella se la quita; si no, se la da
+        const cambia = () => {
+          if (tiene()) { X.fav = X.fav.filter(f => f.id !== id); return 'unfavored'; }
+          X.fav = X.fav.concat([{ id, texto: 'Alguien - Estrella Dada Sin Querer ' + id + ' (Original Mix)', dur: 200, estado: 0 }]);
+          return 'favored';
+        };
+        if (!X.sesion) return json({ success: false, message: 'Please <a href="/account/logoreg">log in</a> first' });
+        if (F.rechaza) return json({ success: false, message: F.rechaza });
+        if (F.sinEfecto) return json({ success: true, result: 'unfavored' });
+        if (F.carrera) X.fav = X.fav.filter(f => f.id !== id);
+        if (F.red) { if (F.llega) cambia(); return ruta.abort('connectionreset'); }
+        if (F.estado) { if (F.llega) cambia(); return ruta.fulfill({ status: F.estado, headers: { 'content-type': 'text/html; charset=utf-8' }, body: '<!DOCTYPE html><html><body><h1>Error</h1></body></html>' }); }
+        const res = cambia();
+        if (F.noJson) return html('<!DOCTYPE html><html><body>ok</body></html>');
+        return json({ success: true, result: res, header: '<span id="span-favorites">' + X.fav.length + '</span>' });
+      }
+      if (metodo !== 'GET') return json({ success: true, result: 'favored' }); // cualquier otra cosa que no sea leer queda apuntada en sxPet
       if (m) {
         if (!this.sx.sesion) return ruta.fulfill({ status: 302, headers: { location: 'https://soundeo.com/account/logoreg' } });
         return html.apply(null, this.sxPagina(m[1], parseInt(u.searchParams.get('page') || '1', 10) || 1));

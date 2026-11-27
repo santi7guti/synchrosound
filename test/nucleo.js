@@ -344,17 +344,60 @@ es(C.FRESCA_ESCR === 15000 && C.MAX_LOTE === 100 && C.URI_CANCION.test(U(1)) && 
   const fs3 = C.descRb(C.sxPista([3, 'Un Título Sin Guion', 100, 0]));
   es(fs3.artista === '' && fs3.nombre === 'Un Título Sin Guion', 'un texto sin « - » queda como título sin artista');
 }
-// --- el lector de Soundeo solo lee (comprobación sobre su código, sin comentarios) ---
+// --- «Quitar ★»: la marca del viaje lleva dentro los ids ---
+{
+  const B = 'Ab3Cd4Ef5Gh6Ij7K', CARGADOR = /^[A-Za-z0-9_-]{16,64}$/;
+  const m1 = C.sxMarcaQuita(B, [9000001]);
+  es(m1 === B + '-q-' + (9000001).toString(36) && CARGADOR.test(m1) && JSON.stringify(C.sxIdsDeMarca(m1)) === '[9000001]', 'una marca de quitar lleva el id y el cargador instalado la deja pasar: ' + m1);
+  const ocho = [1000001, 2000002, 30000003, 40000004, 50000005, 59999999, 7000007, 8000008];
+  const m8 = C.sxMarcaQuita(B, ocho);
+  es(CARGADOR.test(m8) && m8.length <= 64 && JSON.stringify(C.sxIdsDeMarca(m8)) === JSON.stringify(ocho.slice(0, C.SX_MAX_QUITA)) && C.SX_MAX_QUITA === 6, 'caben ' + C.SX_MAX_QUITA + ' por viaje: van las primeras y la marca no pasa de 64 letras (' + m8.length + ')');
+  const grandes = [99999999, 99999998, 99999997, 99999996, 99999995, 99999994].map(n => n * 1000);
+  const mg = C.sxMarcaQuita(B, grandes);
+  es(mg && mg.length <= 64 && CARGADOR.test(mg) && C.sxIdsDeMarca(mg).length >= 5 && C.sxIdsDeMarca(mg).every((id, i) => id === grandes[i]), 'con identificadores más largos caben menos, pero nunca se pasa de 64: ' + (mg && mg.length));
+  es(C.sxMarcaQuita(B, []) === null && C.sxMarcaQuita(B, [0]) === null && C.sxMarcaQuita(B, [-5]) === null && C.sxMarcaQuita(B, [1.5]) === null && C.sxMarcaQuita(B, ['9000001']) === null && C.sxMarcaQuita(B, [5, 5]) === null &&
+    C.sxMarcaQuita(B, [Number.MAX_SAFE_INTEGER]) === null && C.sxMarcaQuita('corta', [5]) === null && C.sxMarcaQuita(B + 'x', [5]) === null && C.sxMarcaQuita('Ab3Cd4Ef5Gh6Ij7-', [5]) === null && C.sxMarcaQuita(B, null) === null,
+    'no se hace marca con ids raros, repetidos o con una base que no sean 16 letras o cifras');
+  // una marca de «solo leer» (22 letras o cifras) nunca se lee como de quitar
+  es(['Ab3Cd4Ef5Gh6Ij7Kq12345', 'AAAAAAAAAAAAAAAAAAAAAA', 'Ab3Cd4Ef5Gh6Ij7Kxq5cw8h'].every(m => C.sxIdsDeMarca(m).length === 0), 'una marca de solo leer no pide quitar nada');
+  es(C.sxIdsDeMarca(B + '-q-5cw8h-5cw8h').length === 0 && C.sxIdsDeMarca(B + '-q-05').length === 0 && C.sxIdsDeMarca(B + '-q-0').length === 0 && C.sxIdsDeMarca(B + '-q-5CW8H').length === 0,
+    'una marca con un id repetido, con ceros delante, cero o mayúsculas no pide quitar nada (ante la duda, solo leer)');
+}
+
+// --- el lector de Soundeo: lee, y lo único que puede cambiar es quitar una estrella (comprobación sobre su código, sin comentarios) ---
 {
   const fs = require('fs'), path = require('path');
   // primero los de línea (la cabecera del cargador lleva «/*» dentro de una dirección), luego los de bloque
   const sinComentarios = t => t.split('\n').map(l => l.replace(/(^|[^:'"])\/\/.*$/, '$1')).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
   const lector = sinComentarios(fs.readFileSync(path.join(__dirname, '..', 'userscript', 'synchrosound-lector.app.js'), 'utf8'));
   const cargador = sinComentarios(fs.readFileSync(path.join(__dirname, '..', 'userscript', 'synchrosound-lector.user.js'), 'utf8'));
-  es((lector.match(/\bfetch\s*\(/g) || []).length === 1 && /fetch\(ruta, \{ method: 'GET', credentials: 'same-origin'/.test(lector), 'el lector tiene una sola llamada de red y es un GET');
-  es(/const RUTA_OK = \/\^\\\/account\\\/\(favorites\|downloads\)\(\\\?page=\[1-9\]\\d\{0,2\}\)\?\$\/;/.test(lector) && /if \(!RUTA_OK\.test\(ruta\)\) throw/.test(lector), 'y solo admite favoritos y descargas, con o sin página');
-  es(!/XMLHttpRequest|sendBeacon|WebSocket|EventSource|\.submit\s*\(|\.click\s*\(|localStorage|sessionStorage|indexedDB|document\.cookie|\bPOST\b|\bPUT\b|\bDELETE\b|tracks\/favor|track-download|\/vote|history\.|sxfeed|\beval\b|new Function|importScripts|<script/.test(lector),
-    'el lector no tiene otra forma de pedir, enviar, pulsar ni guardar nada, y no menciona nada de Soundeo Feed');
+  es((lector.match(/\bfetch\s*\(/g) || []).length === 2 && /fetch\(ruta, \{ method: 'GET', credentials: 'same-origin'/.test(lector) && /fetch\(ruta, \{ method: 'POST', credentials: 'same-origin'/.test(lector),
+    'el lector tiene dos llamadas de red y solo dos: un GET (leer) y un POST (la estrella)');
+  es(/const RUTA_OK = \/\^\\\/account\\\/\(favorites\|downloads\)\(\\\?page=\[1-9\]\\d\{0,2\}\)\?\$\/;/.test(lector) && /if \(!RUTA_OK\.test\(ruta\)\) throw/.test(lector), 'el GET solo admite favoritos y descargas, con o sin página');
+  // la función que escribe: entera, para mirar sus condiciones
+  const iC = lector.indexOf('async function conmuta(id, pase) {'), fC = lector.indexOf('\n  }\n', iC), conmuta = lector.slice(iC, fC);
+  es(iC > 0 && (conmuta.match(/\bfetch\s*\(/g) || []).length === 1 && conmuta.indexOf("const ruta = '/tracks/favor/' + id;") > 0 && /const RUTA_ESTRELLA = \/\^\\\/tracks\\\/favor\\\/\[1-9\]\\d\{0,15\}\$\/;/.test(lector),
+    'el POST solo puede ir a /tracks/favor/<número>');
+  const antesDeEnviar = conmuta.slice(0, conmuta.indexOf('fetch('));
+  es(/pase\.id !== id/.test(antesDeEnviar) && /pase\.toque !== true/.test(antesDeEnviar) && /pase\.conEstrella !== true/.test(antesDeEnviar) && /pase\.usado/.test(antesDeEnviar) && /PEDIDAS\.indexOf\(id\) < 0/.test(antesDeEnviar) &&
+    /intentadas\.has\(id\)/.test(antesDeEnviar) && /!RUTA_ESTRELLA\.test\(ruta\)/.test(antesDeEnviar) && /intentadas\.add\(id\);/.test(antesDeEnviar) && /pase\.usado = true;/.test(antesDeEnviar),
+    'y antes de enviarlo exige: canción pedida en la marca, tocada por él, vista con la estrella puesta, y un solo intento por canción');
+  es((lector.match(/conmuta\(/g) || []).length === 2 && /conmuta\(q\.id, \{ id: q\.id, toque: ev\.isTrusted === true, conEstrella: fila\.estrella === true \}\)/.test(lector) && /ev\.isTrusted !== true\) return;/.test(lector),
+    'solo se llama desde el toque de «Quitar ★» de una canción, con un toque de verdad y la estrella recién vista');
+  es(!/sendBeacon|WebSocket|EventSource|\.submit\s*\(|\.click\s*\(|dispatchEvent|localStorage|sessionStorage|indexedDB|document\.cookie|\bPUT\b|\bDELETE\b|\bPATCH\b|track-download|\/vote|\/download|clearHistory|history\.|sxfeed|\beval\b|new Function|importScripts|<script/.test(lector) &&
+    (lector.match(/XMLHttpRequest/g) || []).length === 1 && /'X-Requested-With': 'XMLHttpRequest'/.test(lector) && // solo como valor de esa cabecera, que es la que manda la web de Soundeo
+    (lector.match(/\bPOST\b/g) || []).length === 1 && (lector.match(/tracks\\?\/favor/g) || []).length === 2 && (lector.match(/(artists|labels)\\?\/favor/g) || []).length === 0,
+    'el lector no tiene otra forma de pedir, enviar, pulsar ni guardar nada; no descarga, no vota, no vacía listas y no menciona nada de Soundeo Feed');
+  // la copia que tiene el lector de «qué ids lleva la marca» dice lo mismo que la de la app
+  {
+    const iF = lector.indexOf('function idsPedidos(marca) {'), fF = lector.indexOf('\n  }\n', iF);
+    const idsPedidos = new Function('return (' + lector.slice(iF, fF + 4) + ')')();
+    const B = 'Ab3Cd4Ef5Gh6Ij7K';
+    const casos = [B, B + '-q', B + '-q-5cwg1', B + '-q-5cwg1-5cwg2', B + '-q-5cw8h-5cw8i', B + '-q-5cw8h-5cw8h', B + '-q-0', B + '-q-05cw8h', B + '-q-5CW8H', B + '-q--5cw8h', B + '-q-5cw8h-', B + 'x-q-5cw8h', B.slice(1) + '-q-5cw8h',
+      B + '-Q-5cw8h', B + '_q-5cw8h', B + '-q-zzzzzzzz', B + '-q-zzzzzzzzz', B + '-q-1-2-3-4-5-6-7', B + '-q-1-2-3-4-5-6-7-8', 'Ab3Cd4Ef5Gh6Ij7-q-5cw8h', B + '-q-5cw8h\n', '', null, undefined, 12345, B + '-q-5cw8h.x', C.sxMarcaQuita(B, [9000001, 123456, 59999999])];
+    const distintos = casos.filter(c => JSON.stringify(idsPedidos(c)) !== JSON.stringify(C.sxIdsDeMarca(c)));
+    es(distintos.length === 0 && JSON.stringify(idsPedidos(B + '-q-5cwg1-5cwg2')) === JSON.stringify([9000001, 9000002]) && idsPedidos(B).length === 0, 'el lector y la app leen igual qué canciones lleva una marca (distintos: ' + JSON.stringify(distintos) + ')');
+  }
   es((lector.match(/https?:\/\/[^'"\s)]+/g) || []).every(u => u === 'https://santi7guti.github.io/synchrosound/'), 'la única dirección de fuera que conoce es la de vuelta a SynchroSound');
   es((cargador.match(/\bfetch\s*\(/g) || []).length === 1 && /credentials: 'omit'/.test(cargador) && /var SRC = 'https:\/\/santi7guti\.github\.io\/synchrosound\/userscript\/synchrosound-lector\.app\.js';/.test(cargador),
     'el cargador solo descarga el lector, de la web de SynchroSound y sin credenciales');

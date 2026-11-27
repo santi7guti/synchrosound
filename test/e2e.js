@@ -63,7 +63,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
 
   // --- arranque ---
   let t = await cuerpo(page);
-  es(/v0\.5\.0/.test(t), 'se ve el número de versión');
+  es(/v0\.6\.0/.test(t), 'se ve el número de versión');
   es(/Solo lectura/.test(t), 'se ve el indicador de solo lectura');
   es(/Sin conectar en este dispositivo/.test(t), 'empieza sin conectar');
   await foto(page, 'cuentas-vacio' + sufijo);
@@ -330,7 +330,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   await pestana(page, 'Diagnóstico');
   const diag = await page.locator('#diag').inputValue();
   es(/Permiso de escritura en este dispositivo: sí/.test(diag) && /Sincronización: sin hacer/.test(diag) && /añade a «NS -» y «OG -»; añade y quita en Sound All, Sound Down y Sound Try; todo con confirmación/.test(diag), 'el diagnóstico dice si hay permiso de escritura y si se ha sincronizado');
-  es(/SynchroSound 0\.5\.0/.test(diag) && /buscador v5/.test(diag) && /escrituras enviadas: 0/.test(diag) && /Simulación/.test(diag) && diag.indexOf('Dudosas (' + (nD - 2) + ')') >= 0, 'el diagnóstico lleva versión, recuentos y dudosas');
+  es(/SynchroSound 0\.6\.0/.test(diag) && /buscador v5/.test(diag) && /escrituras enviadas: 0/.test(diag) && /Simulación/.test(diag) && diag.indexOf('Dudosas (' + (nD - 2) + ')') >= 0, 'el diagnóstico lleva versión, recuentos y dudosas');
   const usoLs = await page.evaluate(() => JSON.parse(localStorage.getItem('ss.uso')).n);
   es(usoLs === mundo.spGets && diag.indexOf('Peticiones a Spotify hoy: ' + usoLs + ' entre todos tus dispositivos (este: ' + usoLs + ')') >= 0, 'el contador del día coincide con lo que ha recibido Spotify (' + usoLs + ' y ' + mundo.spGets + ')');
   es(/; \d+ peticiones a Spotify\n  playlists releídas: «NS - Techno»\n/.test(diag), 'el diagnóstico dice qué playlists se han releído');
@@ -346,7 +346,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   es(diag.indexOf('usuario_prueba') < 0 && diag.indexOf('ejemplo.test') < 0, 'el diagnóstico no lleva el usuario ni el correo');
   await boton(page, 'Copiar').click();
   const porta = await page.evaluate(() => navigator.clipboard.readText()).catch(() => null);
-  if (porta !== null) es(porta.indexOf('SynchroSound 0.5.0') === 0, 'el botón Copiar copia el diagnóstico');
+  if (porta !== null) es(porta.indexOf('SynchroSound 0.6.0') === 0, 'el botón Copiar copia el diagnóstico');
   await foto(page, 'diagnostico' + sufijo);
 
   // --- el candado ---
@@ -1012,7 +1012,7 @@ async function casosSoundeo() {
   };
   const guardada = page => page.waitForFunction(() => !!window.SS && !!window.SS.estado.sx && !window.SS.estado.sxLlegada && !window.SS.sxMirando(), null, { timeout: 15000 });
   const listas = m => Array.from(m.archivos.keys()).filter(k => k.startsWith('/soundeo/')).sort();
-  const soloLee = m => m.sxPet.every(p => /^GET \/(account\/(favorites|downloads)(\?page=\d+)?|account\/logoreg|favicon\.ico)$/.test(p));
+  const soloLee = m => m.sxFavor.length === 0 && m.sxPet.every(p => /^GET \/(account\/(favorites|downloads)(\?page=\d+)?|account\/logoreg|favicon\.ico)$/.test(p));
   const simulaB = async page => { await boton(page, await boton(page, 'Simular').count() ? 'Simular' : 'Simular otra vez').click(); await page.waitForFunction(() => !window.SS.estado.tarea && !!window.SS.estado.simB, null, { timeout: 120000 }); };
   const diag = async page => { await pestana(page, 'Diagnóstico'); const t = await page.locator('#diag').inputValue(); await pestana(page, 'Soundeo a Spotify'); return t; };
   // un enlace de vuelta hecho a mano, sin comprimir (formato «j»)
@@ -1029,7 +1029,7 @@ async function casosSoundeo() {
   let x = await abre(null, true, IPHONE);
   await conecta(x.page, 'Dropbox'); await conecta(x.page, 'Spotify'); await eligeXml(x.page);
   await pestana(x.page, 'Cuentas');
-  es(await x.page.locator('#sx-instalar').getAttribute('href') === 'userscript/synchrosound-lector.user.js' && /Solo lee, y solo cuando pulsas «Leer Soundeo»/.test(await cuerpo(x.page)), 'Cuentas explica el lector y da el enlace para instalarlo');
+  es(await x.page.locator('#sx-instalar').getAttribute('href') === 'userscript/synchrosound-lector.user.js' && /Solo arranca cuando llegas a Soundeo desde la pestaña B/.test(await cuerpo(x.page)) && /lo único que puede cambiar allí es quitar la estrella de las canciones que marques aquí, y solo de la que toques en su panel, una a una\. Nunca da estrellas ni descarga\./.test(await cuerpo(x.page)), 'Cuentas explica el lector, lo único que puede cambiar en Soundeo, y da el enlace para instalarlo');
   await pestana(x.page, 'Soundeo a Spotify');
   await x.page.waitForFunction(() => /Todavía no hay ninguna lista de Soundeo guardada/.test(document.body.innerText), null, { timeout: 15000 });
   es(await boton(x.page, 'Simular').isDisabled() && /Simular no cambia nada en Spotify, y en Soundeo la app solo lee/.test(await cuerpo(x.page)), 'sin lista de Soundeo no se puede simular, y la pantalla dice que simular no cambia nada');
@@ -1056,7 +1056,7 @@ async function casosSoundeo() {
   es(/Favoritos de Soundeo leídos el \d\d\/\d\d\/\d{4}.* 10 favoritos, 4 descargados\./.test(t) && await x.page.locator('#sx-avisos').count() === 0, 'y enseña de cuándo es, sin avisos: es una lista completa');
   let ls1 = listas(x.mundo);
   let guard = JSON.parse(x.mundo.archivos.get(ls1[0]).texto);
-  es(ls1.length === 1 && guard.v === 1 && guard.fav.length === 10 && guard.dow.length === 5 && guard.mal.length === 0 && guard.pag.join() === '1,1' && guard.lector === '1.0.0' && /^SynchroSound /.test(guard.app) && guard.n === undefined,
+  es(ls1.length === 1 && guard.v === 1 && guard.fav.length === 10 && guard.dow.length === 5 && guard.mal.length === 0 && guard.pag.join() === '1,1' && guard.lector === '1.1.0' && /^SynchroSound /.test(guard.app) && guard.n === undefined,
     'el archivo guardado lleva los 10 favoritos, las 5 descargas y de dónde sale');
   es(JSON.stringify(guard.fav[9]) === JSON.stringify([9000010, 'Rita Polo - Sube Sube (Extended Mix)', 370, 0]) && guard.fav[7][3] === 2, 'cada favorito con su id, su texto, su duración y su estado');
   es(await x.page.evaluate(() => localStorage.getItem('ss.sx.pide') === null && localStorage.getItem('ss.sx.llegada') === null), 'la marca queda gastada y no queda nada pendiente en el navegador');
@@ -1080,7 +1080,7 @@ async function casosSoundeo() {
   await foto(x.page, 'b-iphone');
   es(x.mundo.busquedas - busB > 0 && x.mundo.busquedas - busB < 25, 'búsquedas de la simulación de B: ' + (x.mundo.busquedas - busB));
   let d = await diag(x.page);
-  es(/Soundeo: lista \/soundeo\/soundeo-\d{8}-\d{6}\.json, leída el .* \(lector 1\.0\.0\): 10 favoritos, 4 descargados; sin publicar 1; en «Mis descargas» 5; páginas 1\+1; completa/.test(d) &&
+  es(/Soundeo: lista \/soundeo\/soundeo-\d{8}-\d{6}\.json, leída el .* \(lector 1\.1\.0\): 10 favoritos, 4 descargados; sin publicar 1; en «Mis descargas» 5; páginas 1\+1; completa/.test(d) && /Quitar ★: marcadas 0; ningún viaje desde este navegador/.test(d) &&
     /Simulación B .*: favoritos 10; ya están 2; se añadirían 5; dudosas 1; no están 2/.test(d) && d.indexOf('  Sound Down: ya 1, añadir 3, dudosas 0, no están 0') > 0, 'el diagnóstico cuenta la lista y la simulación de B');
   // la simulación de A no se ve afectada, y una respuesta dada en B vale para la misma canción en A
   await simula(x.page);
@@ -1215,6 +1215,276 @@ async function casosSoundeo() {
   await boton(x.page, 'Mirar en Dropbox').click();
   await x.page.waitForSelector('.aviso.error', { timeout: 15000 });
   es(/La lista «\/soundeo\/soundeo-20261120-100000\.json» no se puede usar: no dice cuándo se leyó\./.test(await cuerpo(x.page)), 'un archivo de lista estropeado no se usa, y se dice cuál es');
+  await x.ctx.close();
+}
+
+// «Quitar ★» (v0.6.0): marcar en «Quitadas a mano», ir a Soundeo con los ids en la marca, y allí quitar la estrella
+// de la canción que él toque, una a una. Lo único que la app puede cambiar en Soundeo.
+async function casosEstrella() {
+  console.log('Quitar ★ en Soundeo');
+  const CARGADOR = fs.readFileSync(path.join(__dirname, '..', 'userscript', 'synchrosound-lector.user.js'), 'utf8');
+  const soloEnSoundeo = codigo => "if (location.hostname === 'soundeo.com') {\n" + codigo + '\n}';
+  const FEED = `(function () {
+    localStorage.setItem('sxfeed:app:code', 'codigo de feed');
+    localStorage.setItem('prefs', '{"ui2":true}');
+    var F = window.fetch; window.__feedFetch = 0;
+    window.fetch = function () { window.__feedFetch++; return F.apply(this, arguments); };
+    document.addEventListener('DOMContentLoaded', function () {
+      var st = document.createElement('style');
+      st.textContent = '#sx-host{position:fixed;left:0;top:0;width:0;height:0;z-index:2147483000}html.sx-open body>*:not(#sx-host){display:none!important}';
+      document.head.appendChild(st);
+      var host = document.createElement('div'); host.id = 'sx-host'; document.body.appendChild(host);
+      document.documentElement.classList.add('sx-open');
+      setTimeout(function () { history.replaceState(history.state, '', location.pathname + location.search + '#sx=feed&id=1'); }, 350);
+    });
+  })();`;
+  const c = D.cat, U = k => c[k].uri;
+  const pis = ts => ts.map(t => ({ added_at: '2026-11-01T10:00:00Z', t }));
+  const IPHONE = Object.assign({}, devices['iPhone 14'], { defaultBrowserType: undefined });
+  const libre = x => x.page.waitForFunction(() => !window.SS.estado.tarea, null, { timeout: 90000 });
+  const hayLista = x => x.page.waitForFunction(() => !!window.SS && !!window.SS.estado.sx && !window.SS.estado.sxLlegada && !window.SS.sxMirando(), null, { timeout: 15000 });
+  // En Sound All están las cinco; de Sound Try él ha quitado a mano tres que la app había puesto.
+  const CAMBIOS = { 'Sound All': { pistas: pis([c.s1, c.s2, c.s3, c.like1, c.paper]) }, 'Sound Try': { pistas: pis([]) } };
+  const REG = { 9000002: { t: 1, n: 'Soundero - Favorita Por Probar (Original Mix)', p: { all: U('s2'), try: U('s2') } }, 9000009: { t: 1, n: 'Iris Mar - Solo Me Gusta (Original Mix)', p: { all: U('like1'), try: U('like1') } },
+    9000004: { t: 1, n: 'Nora Vex - Paper Lanterns (Extended Mix)', p: { all: U('paper'), try: U('paper') } } };
+  const conEst = ids => { const r = JSON.parse(JSON.stringify(REG)); ids.forEach(id => { r[id] = Object.assign(r[id] || { t: 1, n: 'x', p: {} }, { est: 1 }); }); return r; };
+  const abre = async o => {
+    const P = D.copiaBiblio(null, o.cambios || CAMBIOS);
+    const x = await nuevo(Object.assign({ playlists: P }, o.mundo), o.ctx || IPHONE);
+    await x.ctx.addInitScript({ content: soloEnSoundeo(CARGADOR) });
+    if (o.feed) await x.ctx.addInitScript({ content: soloEnSoundeo(FEED) });
+    const favs = o.favs || D.sxFav;
+    x.mundo.pon('/soundeo/soundeo-20261127-100000.json', JSON.stringify({ v: 1, t: Date.now() - 60000, lector: '1.1.0', fav: favs.map(f => [f.id, f.texto, f.dur, f.estado]), dow: D.sxDow, pag: [1, 1], mal: [] }));
+    const ids = { all: P.find(p => p.name === 'Sound All').id, down: P.find(p => p.name === 'Sound Down').id, try: P.find(p => p.name === 'Sound Try').id };
+    const sx = JSON.parse(JSON.stringify(o.sx || REG));
+    Object.keys(sx).forEach(id => { const r = sx[id]; r.q = {}; r.o = {}; Object.keys(r.p || {}).forEach(k => { r.q[k] = ids[k]; r.o[k] = 1; }); });
+    x.mundo.pon('/memoria/memoria.json', JSON.stringify({ v: 1, sx }));
+    await conecta(x.page, 'Dropbox'); await conecta(x.page, 'Spotify');
+    await x.page.waitForFunction(() => /como Prueba/.test(document.body.innerText), null, { timeout: 15000 });
+    await pestana(x.page, 'Soundeo a Spotify');
+    await hayLista(x);
+    x.P = P;
+    return x;
+  };
+  const simulaB = async x => { await boton(x.page, await boton(x.page, 'Simular').count() ? 'Simular' : 'Simular otra vez').click(); await x.page.waitForFunction(() => !window.SS.estado.tarea && !!window.SS.estado.simB, null, { timeout: 120000 }); };
+  const sxMem = x => x.page.evaluate(() => JSON.parse(JSON.stringify(window.SS.estado.mem.sx)));
+  const panel = page => page.evaluate(() => document.getElementById('ssync-lector').shadowRoot.querySelector('.caja').innerText);
+  const canciones = page => page.evaluate(() => Array.from(document.getElementById('ssync-lector').shadowRoot.querySelectorAll('.cancion')).map(e => ({ id: Number(e.getAttribute('data-id')), nombre: e.querySelector('.nombre').textContent, res: e.querySelector('.res') ? e.querySelector('.res').textContent : '', boton: !!e.querySelector('button.quita') })));
+  const de = (cs, id) => cs.find(q => q.id === id) || {};
+  const btnQuita = (page, id) => page.locator('.cancion[data-id="' + id + '"] button.quita');
+  const hecho = (page, id) => page.waitForFunction(i => { const h = window.__SSYNC_LECTOR__ && window.__SSYNC_LECTOR__.hecho; const q = h && h.quita && h.quita.find(x => x[0] === i); return !!q && q[1] === 'hecha'; }, id, { timeout: 30000 });
+  // pulsa «Ir a Soundeo a quitar ★» y espera al panel del lector
+  const vaASoundeo = async x => {
+    await x.page.locator('#sx-estrellas .acciones .btn', { hasText: /^Ir a Soundeo a quitar ★/ }).click();
+    await x.page.waitForURL(/^https:\/\/soundeo\.com\//, { timeout: 15000 });
+    await x.page.waitForFunction(() => { const h = document.getElementById('ssync-lector'); return !!h && !!h.shadowRoot.querySelector('#ssync-volver'); }, null, { timeout: 20000 });
+  };
+  const vuelve = async x => {
+    await x.page.locator('#ssync-volver').click();
+    await x.page.waitForURL(u => u.toString().startsWith(SITIO), { timeout: 15000 });
+    await x.page.waitForSelector('.cab');
+    await hayLista(x);
+  };
+  const posts = m => m.sxPet.filter(p => !/^GET /.test(p));
+  const idsFav = m => m.sx.fav.map(f => f.id).sort().join();
+  // con las estrellas ya marcadas en la memoria (como si las hubiese marcado en el PC), directo al panel de Soundeo
+  const hastaPanel = async (marcadas, o) => { const x = await abre(Object.assign({ sx: conEst(marcadas) }, o)); await x.page.waitForSelector('#sx-estrellas'); await vaASoundeo(x); return x; };
+
+  // ---------- El camino entero, en un iPhone y con Soundeo Feed en la página ----------
+  let x = await abre({ feed: true });
+  es(await x.page.locator('#sx-estrellas').count() === 0, 'sin nada marcado no hay bloque de «Quitar ★ en Soundeo»');
+  await simulaB(x);
+  es(await x.page.locator('#sx-mano li.fila').count() === 3, 'las tres que quitó a mano de Sound Try salen en «Quitadas a mano»');
+  const filaMano = t => x.page.locator('#sx-mano li.fila', { hasText: t });
+  es(await filaMano('Solo Me Gusta').getByRole('button', { name: 'Quitar ★', exact: true }).isEnabled(), '«Quitar ★» ya se puede pulsar');
+  await filaMano('Solo Me Gusta').getByRole('button', { name: 'Quitar ★', exact: true }).click();
+  await libre(x);
+  let M = await sxMem(x);
+  es(M['9000009'].est === 1 && M['9000009'].p.all === U('like1') && !M['9000002'].est, '«Quitar ★» marca ese favorito en el registro y no toca lo demás de su apunte');
+  es(/Marcada para quitarle la ★\. Se quita en Soundeo, en el iPhone/.test(await filaMano('Solo Me Gusta').innerText()) && await filaMano('Solo Me Gusta').getByRole('button', { name: 'Desmarcar ★', exact: true }).count() === 1, 'la fila dice que está marcada y deja desmarcarla');
+  es(x.mundo.sxPet.length === 0 && x.mundo.escrituras.length === 0, 'marcar no toca Soundeo ni Spotify');
+  let t = await x.page.locator('#sx-estrellas').innerText();
+  es(/Iris Mar - Solo Me Gusta \(Original Mix\)/.test(t) && /Ir a Soundeo a quitar ★ \(1\)/.test(t) && /la estrella solo se le quita a la que toques allí, una a una/.test(t), 'el bloque «Quitar ★ en Soundeo» lista lo marcado y explica cómo se quita');
+  await filaMano('Favorita Por Probar').getByRole('button', { name: 'Quitar ★', exact: true }).click();
+  await libre(x);
+  es(await x.page.locator('#sx-marcadas li.fila').count() === 2, 'se pueden marcar varias');
+  await x.page.locator('#sx-marcadas li.fila', { hasText: 'Favorita Por Probar' }).getByRole('button', { name: 'Desmarcar', exact: true }).click();
+  await libre(x);
+  M = await sxMem(x);
+  es(await x.page.locator('#sx-marcadas li.fila').count() === 1 && !M['9000002'].est && M['9000002'].p.try === U('s2'), 'y desmarcar desde el bloque');
+  await filaMano('Favorita Por Probar').getByRole('button', { name: 'Quitar ★', exact: true }).click();
+  await libre(x);
+  await x.page.waitForTimeout(1800);
+  es(JSON.parse(x.mundo.archivos.get('/memoria/memoria.json').texto).sx['9000009'].est === 1, 'lo marcado queda en la memoria común de Dropbox (se puede marcar en el PC y quitar en el iPhone)');
+  await foto(x.page, 'estrella-bloque-iphone');
+  const favAntes = idsFav(x.mundo);
+  await vaASoundeo(x);
+  const marca = decodeURIComponent(x.page.url().split('#synchrosound=')[1] || '');
+  es(/^[A-Za-z0-9]{16}-q-5cwg2-5cwg9$/.test(marca) && marca.length <= 64 && /^https:\/\/soundeo\.com\/account\/favorites#synchrosound=/.test(x.page.url()), 'el viaje lleva los ids dentro de la marca, con la forma que deja pasar el cargador instalado: ' + marca.slice(16));
+  let cs = await canciones(x.page);
+  t = await panel(x.page);
+  es(/^Quitar ★ de favoritos/.test(t) && cs.length === 2 && de(cs, 9000009).nombre === 'Iris Mar - Solo Me Gusta (Original Mix)' && de(cs, 9000002).nombre === 'Soundero - Favorita Por Probar (Original Mix)' && cs.every(q => q.boton && !q.res) &&
+    /SynchroSound pide quitar la estrella de estas 2 canciones\. Toca «Quitar ★» en cada una/.test(t) && /Nunca da estrellas, no descarga y no cambia nada más en Soundeo\./.test(t),
+    'en Soundeo el lector enseña las canciones pedidas con su nombre de allí, cada una con su botón, y dice qué puede hacer');
+  await foto(x.page, 'estrella-lector-iphone');
+  es(x.mundo.sxFavor.length === 0 && posts(x.mundo).length === 0 && idsFav(x.mundo) === favAntes, 'llegar al panel no quita nada: sin un toque no sale ninguna llamada');
+  // un «clic» fabricado por otro código de la página (no un toque suyo) no vale
+  await x.page.evaluate(() => { const b = document.getElementById('ssync-lector').shadowRoot.querySelector('.cancion button.quita'); b.click(); b.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+  await x.page.waitForTimeout(600);
+  es(x.mundo.sxFavor.length === 0 && (await canciones(x.page)).every(q => q.boton), 'un clic fabricado por la página (no un toque de verdad) no quita nada');
+  const nPet = x.mundo.sxPet.length;
+  await btnQuita(x.page, 9000009).click();
+  await hecho(x.page, 9000009);
+  cs = await canciones(x.page);
+  const tramo = x.mundo.sxPet.slice(nPet);
+  es(x.mundo.sxFavor.length === 1 && x.mundo.sxFavor[0].id === 9000009 && x.mundo.sxFavor[0].antes === true && x.mundo.sxFavor[0].cab.xrw === 'XMLHttpRequest' && x.mundo.sxFavor[0].cuerpo === '' &&
+    JSON.stringify(tramo) === JSON.stringify(['GET /account/favorites', 'POST /tracks/favor/9000009', 'GET /account/favorites']),
+    'un toque: se leen los favoritos, sale UNA llamada de la estrella para esa canción y se vuelven a leer: ' + JSON.stringify(tramo));
+  es(de(cs, 9000009).res === 'Estrella quitada. Comprobado: ya no está en tus favoritos.' && !de(cs, 9000009).boton && de(cs, 9000002).boton && !de(cs, 9000002).res, 'el panel dice que está quitada y comprobada; la otra sigue con su botón, sin tocar');
+  es(x.mundo.sx.fav.length === 9 && !x.mundo.sx.fav.some(f => f.id === 9000009) && idsFav(x.mundo) === favAntes.split(',').filter(i => i !== '9000009').join(), 'en Soundeo solo ha perdido la estrella esa canción; las demás, igual');
+  es(/Favoritos: 9 /.test(await panel(x.page)), 'y el recuento del panel ya es el nuevo');
+  await vuelve(x);
+  t = await cuerpo(x.page);
+  es(/Viaje a Soundeo para quitar ★: de 2 canciones, 1 ya no es favorita y 1 sigue siéndolo\. Simula: saldrán para quitar de las playlists donde sigan\./.test(t) && /Lista de Soundeo guardada en Dropbox/.test(t) && /9 favoritos/.test(await x.page.locator('#sx-lista').innerText()),
+    'de vuelta, la app recibe la lista nueva y dice qué ha pasado con las pedidas');
+  await x.page.waitForFunction(() => { const r = window.SS.estado.mem && window.SS.estado.mem.sx['9000009']; return !!r && !r.est; }, null, { timeout: 10000 });
+  M = await sxMem(x);
+  es(!M['9000009'].est && M['9000009'].p.all === U('like1') && M['9000002'].est === 1, 'la que ya no es favorita deja de estar marcada (su apunte sigue: aún está en Sound All); la que no tocó sigue marcada');
+  es(await x.page.locator('#sx-marcadas li.fila').count() === 1 && /Último viaje/.test(await x.page.locator('#sx-viaje').innerText()), 'el bloque enseña el último viaje y lo que queda marcado');
+  await simulaB(x);
+  await boton(x.page, 'Preparar la sincronización de Soundeo (no envía nada)').click();
+  await x.page.waitForSelector('#sincb-conf');
+  t = await x.page.locator('#sincb-conf').innerText();
+  es(/Quitar de Sound All: Iris Mar — Solo Me Gusta/.test(t) && /Por qué: ya no es favorita en Soundeo \(tu favorito: Iris Mar - Solo Me Gusta \(Original Mix\)\)\./.test(t) && await x.page.locator('#sincb-conf input.marca:checked').count() === 0 &&
+    await x.page.locator('#sx-mano li.fila').count() === 2, 'y al simular, la canción sale para quitar de Sound All (sin marcar), como cualquier otra que pierde la estrella');
+  const dg = await x.page.evaluate(() => window.SS.diagnostico());
+  es(/Quitar ★: marcadas 1; último viaje .*: pedidas 2, ya no son favoritas 1, siguen 1/.test(dg) && /en Soundeo solo quita la ★ que toques allí/.test(dg), 'el diagnóstico lo cuenta');
+  await x.page.goto('https://soundeo.com/');
+  es(await x.page.evaluate(() => localStorage.getItem('sxfeed:app:code') === 'codigo de feed' && localStorage.getItem('prefs') === '{"ui2":true}' && Object.keys(localStorage).every(k => /^sxfeed:|^prefs$/.test(k))), 'en soundeo.com no queda nada guardado por el lector, y lo de Soundeo Feed sigue igual');
+  es(x.mundo.escrituras.length === 0 && x.mundo.sxFavor.length === 1 && posts(x.mundo).length === 1, 'en todo el camino: una sola llamada a Soundeo que no es leer, y ninguna escritura en Spotify');
+  es(x.consola.length === 0, 'sin errores en la consola: ' + x.consola.join(' | '));
+  await x.ctx.close();
+
+  // ---------- Dos toques seguidos: una sola llamada. Y cada canción, un solo intento por viaje ----------
+  x = await hastaPanel([9000009]);
+  await btnQuita(x.page, 9000009).dblclick();
+  await hecho(x.page, 9000009);
+  es(x.mundo.sxFavor.length === 1 && (await canciones(x.page))[0].res === 'Estrella quitada. Comprobado: ya no está en tus favoritos.', 'dos toques seguidos en la misma canción: una sola llamada');
+  await x.ctx.close();
+
+  // ---------- Soundeo dice que no ----------
+  x = await hastaPanel([9000009], { mundo: { soundeo: { favor: { rechaza: 'You are <b>not</b> allowed' } } } });
+  await btnQuita(x.page, 9000009).click();
+  await hecho(x.page, 9000009);
+  cs = await canciones(x.page);
+  es(x.mundo.sxFavor.length === 1 && cs[0].res === 'Soundeo no lo ha aceptado: You are not allowed. Sigue en tus favoritos. No se repite.' && !cs[0].boton && x.mundo.sx.fav.some(f => f.id === 9000009),
+    'si Soundeo la rechaza: se dice con su mensaje (como texto), sigue en favoritos y no se repite: ' + cs[0].res);
+  await vuelve(x);
+  M = await sxMem(x);
+  es(/de 1 canción, 0 ya no son favoritas y 1 sigue siéndolo\./.test(await cuerpo(x.page)) && M['9000009'].est === 1, 'de vuelta, la app dice que sigue siendo favorita y la deja marcada');
+  await x.ctx.close();
+  // ---------- Error 500: no se sabe si llegó; manda lo que se lee después ----------
+  x = await hastaPanel([9000009], { mundo: { soundeo: { favor: { estado: 500 } } } });
+  await btnQuita(x.page, 9000009).click();
+  await hecho(x.page, 9000009);
+  cs = await canciones(x.page);
+  es(x.mundo.sxFavor.length === 1 && cs[0].res === 'No se sabe si la llamada llegó (Soundeo respondió 500); al volver a leer, sigue en tus favoritos. No se repite.', 'un error 500 que no llegó: se dice, sigue en favoritos, una sola llamada: ' + cs[0].res);
+  await x.ctx.close();
+  x = await hastaPanel([9000009], { mundo: { soundeo: { favor: { estado: 500, llega: true } } } });
+  await btnQuita(x.page, 9000009).click();
+  await hecho(x.page, 9000009);
+  es(x.mundo.sxFavor.length === 1 && (await canciones(x.page))[0].res === 'Estrella quitada. Comprobado: ya no está en tus favoritos.', 'un error 500 que sí llegó: al volver a leer ya no está, y eso es lo que cuenta');
+  await x.ctx.close();
+  // ---------- Se corta la conexión ----------
+  x = await hastaPanel([9000009], { mundo: { soundeo: { favor: { red: true } } } });
+  await btnQuita(x.page, 9000009).click();
+  await hecho(x.page, 9000009);
+  cs = await canciones(x.page);
+  es(x.mundo.sxFavor.length === 1 && /^No se sabe si la llamada llegó \(.+\); al volver a leer, sigue en tus favoritos\. No se repite\.$/.test(cs[0].res), 'si se corta la conexión: una sola llamada, se relee y se dice lo que hay: ' + cs[0].res);
+  await x.ctx.close();
+  // ---------- Responde algo que no es JSON, pero la quita ----------
+  x = await hastaPanel([9000009], { mundo: { soundeo: { favor: { noJson: true } } } });
+  await btnQuita(x.page, 9000009).click();
+  await hecho(x.page, 9000009);
+  es(x.mundo.sxFavor.length === 1 && (await canciones(x.page))[0].res === 'Estrella quitada. Comprobado: ya no está en tus favoritos.', 'una respuesta ilegible no importa si al releer ya no está');
+  await x.ctx.close();
+  // ---------- Dice que sí y no hace nada ----------
+  x = await hastaPanel([9000009], { mundo: { soundeo: { favor: { sinEfecto: true } } } });
+  await btnQuita(x.page, 9000009).click();
+  await hecho(x.page, 9000009);
+  cs = await canciones(x.page);
+  es(x.mundo.sxFavor.length === 1 && cs[0].res === 'Soundeo ha contestado que sí, pero al volver a leer sigue en tus favoritos. No se repite: mírala tú en Soundeo.', 'si Soundeo dice que sí y la canción sigue: se dice y no se insiste');
+  await x.ctx.close();
+
+  // ---------- La llamada es un interruptor: nunca se envía si la canción no lleva la estrella ----------
+  x = await hastaPanel([9000009, 9000002]);
+  x.mundo.sx.fav = x.mundo.sx.fav.filter(f => f.id !== 9000009); // él le quita la estrella por su cuenta mientras el panel está abierto
+  await btnQuita(x.page, 9000009).click();
+  await hecho(x.page, 9000009);
+  cs = await canciones(x.page);
+  es(x.mundo.sxFavor.length === 0 && posts(x.mundo).length === 0 && de(cs, 9000009).res === 'Ya no está en tus favoritos. No se ha enviado nada.' && !x.mundo.sx.fav.some(f => f.id === 9000009),
+    'si al comprobarlo justo antes ya no es favorita, no se envía nada (la llamada le DARÍA la estrella)');
+  x.mundo.sx.sesion = false;
+  await btnQuita(x.page, 9000002).click();
+  await hecho(x.page, 9000002);
+  cs = await canciones(x.page);
+  es(x.mundo.sxFavor.length === 0 && de(cs, 9000002).res === 'Soundeo ha cerrado tu sesión. No se ha enviado nada.', 'sin sesión no se envía nada');
+  await x.ctx.close();
+  x = await hastaPanel([9000009]);
+  x.mundo.sx.falla = { lista: 'favorites', pagina: 1, estado: 500 };
+  await btnQuita(x.page, 9000009).click();
+  await hecho(x.page, 9000009);
+  cs = await canciones(x.page);
+  es(x.mundo.sxFavor.length === 0 && /^No se han podido leer tus favoritos para comprobarlo.*No se ha enviado nada\.$/.test(cs[0].res), 'si no se pueden leer los favoritos para comprobarlo, no se envía nada: ' + cs[0].res);
+  await x.ctx.close();
+  // Alguien le quita la estrella entre la comprobación y la llamada: Soundeo se la da. Se dice y no se toca más.
+  x = await hastaPanel([9000009], { mundo: { soundeo: { favor: { carrera: true } } } });
+  await btnQuita(x.page, 9000009).click();
+  await hecho(x.page, 9000009);
+  cs = await canciones(x.page);
+  es(x.mundo.sxFavor.length === 1 && posts(x.mundo).length === 1 && /^Ojo: Soundeo contesta que ahora SÍ es favorita/.test(cs[0].res) && /No la toco más/.test(cs[0].res) && !cs[0].boton,
+    'si por una carrera Soundeo contesta que ha quedado CON estrella, el lector lo dice y no envía nada más (ni para deshacerlo)');
+  await x.ctx.close();
+
+  // ---------- Una pedida que ya no es favorita al llegar: sin botón ----------
+  x = await hastaPanel([9000009, 9000002], { mundo: { soundeo: { fav: D.sxFav.filter(f => f.id !== 9000002) } } });
+  cs = await canciones(x.page);
+  es(cs.length === 2 && de(cs, 9000009).boton && !de(cs, 9000002).boton && de(cs, 9000002).res === 'No está en tus favoritos (quizá ya le quitaste la estrella). No se toca.', 'una canción pedida que ya no está en favoritos sale sin botón: ' + JSON.stringify(cs));
+  await vuelve(x);
+  es(/de 2 canciones, 1 ya no es favorita y 1 sigue siéndolo/.test(await cuerpo(x.page)) && x.mundo.sxFavor.length === 0, 'y de vuelta cuenta como que ya no es favorita, sin haber enviado nada');
+  await x.ctx.close();
+
+  // ---------- Más de seis marcadas: seis por viaje ----------
+  const ocho = D.sxFav.slice(0, 8).map(f => f.id);
+  x = await abre({ sx: conEst(ocho) });
+  await x.page.waitForSelector('#sx-estrellas');
+  t = await x.page.locator('#sx-estrellas').innerText();
+  es(await x.page.locator('#sx-marcadas li.fila').count() === 8 && /En cada viaje caben 6: irán las 6 primeras y las demás, en otro viaje\./.test(t) && /Ir a Soundeo a quitar ★ \(6\)/.test(t), 'con más de seis marcadas, el bloque dice que van de seis en seis');
+  await vaASoundeo(x);
+  const m6 = decodeURIComponent(x.page.url().split('#synchrosound=')[1] || '');
+  cs = await canciones(x.page);
+  es(m6.length <= 64 && /^[A-Za-z0-9_-]{16,64}$/.test(m6) && cs.length === 6 && cs.map(q => q.id).join() === ocho.slice(0, 6).join(), 'y al lector le llegan seis, en una marca de ' + m6.length + ' letras');
+  await x.ctx.close();
+
+  // ---------- La lista vuelve con filtros: no se puede saber qué ha perdido la estrella ----------
+  x = await hastaPanel([9000009], { mundo: { soundeo: { filtros: 'fav' } } });
+  await btnQuita(x.page, 9000009).click();
+  await hecho(x.page, 9000009);
+  await vuelve(x);
+  M = await sxMem(x);
+  es(/la lista ha vuelto incompleta, así que no se puede saber cuáles han perdido la estrella\. Lee Soundeo otra vez\./.test(await cuerpo(x.page)) && M['9000009'].est === 1, 'si la lista vuelve con filtros, la app no da nada por quitado y lo deja marcado');
+  await x.ctx.close();
+
+  // ---------- Un enlace a Soundeo hecho por otro, con ids que SynchroSound no ha pedido ----------
+  x = await abre({});
+  await x.page.goto('https://soundeo.com/account/favorites#synchrosound=AAAAAAAAAAAAAAAA-q-' + (9000001).toString(36));
+  await x.page.waitForFunction(() => { const h = document.getElementById('ssync-lector'); return !!h && !!h.shadowRoot.querySelector('#ssync-volver'); }, null, { timeout: 20000 });
+  await x.page.waitForTimeout(800);
+  es(x.mundo.sxFavor.length === 0 && (await canciones(x.page)).length === 1, 'un enlace ajeno con una marca de quitar enseña el panel, pero sin su toque no sale ninguna llamada');
+  await x.page.locator('#ssync-volver').click();
+  await x.page.waitForURL(u => u.toString().startsWith(SITIO), { timeout: 15000 });
+  await x.page.waitForSelector('.cab');
+  es(/La lista de Soundeo no se ha aceptado: no corresponde a una lectura pedida desde este navegador\./.test(await cuerpo(x.page)), 'y SynchroSound no acepta la lista de un viaje que no pidió');
   await x.ctx.close();
 }
 
@@ -1377,7 +1647,7 @@ async function casosSincB() {
   dg = await x.page.evaluate(() => window.SS.diagnostico());
   es(/Quitadas a mano B \(2\):/.test(dg) && /fuera de Sound Try/.test(dg) && /    Sound All: añadir 0; quitar 0; quitadas a mano 1/.test(dg), 'el diagnóstico lista lo quitado a mano');
   const tit = await x.page.locator('#sx-mano li.fila').first().locator('button').evaluateAll(bs => bs.map(b => b.textContent + '|' + b.title.slice(0, 24) + '|' + b.disabled));
-  es(tit.length === 3 && /^No es\|«No es»: la app emparejó/.test(tit[0]) && /^Dejarla así\|«Dejarla así»: la pareja/.test(tit[1]) && /^Quitar ★\|«Quitar ★»: ya no te gu.*\|true$/.test(tit[2]), 'cada respuesta explica sus consecuencias al pasar el ratón, y «Quitar ★» aún no se puede pulsar: ' + tit.join(' ; '));
+  es(tit.length === 3 && /^No es\|«No es»: la app emparejó/.test(tit[0]) && /^Dejarla así\|«Dejarla así»: la pareja/.test(tit[1]) && /^Quitar ★\|«Quitar ★»: ya no te gu.*\|false$/.test(tit[2]), 'cada respuesta explica sus consecuencias al pasar el ratón, y «Quitar ★» ya se puede pulsar: ' + tit.join(' ; '));
   await x.page.locator('#mano-ayuda').click();
   await foto(x.page, 'sincb-mano-iphone');
   es(await x.page.locator('#mano-explica li').count() === 3 && /Conservas la estrella, la canción no vuelve a esa playlist y no se te pregunta más/.test(await x.page.locator('#mano-explica').innerText()), 'y el «?» las enseña escritas, para el móvil');
@@ -1704,7 +1974,7 @@ async function casosSinc() {
   es(t.indexOf(antes[0].ruta.split('/').pop()) >= 0 && t.indexOf(regs[0].ruta.split('/').pop()) >= 0, 'el resultado nombra la copia y el registro');
   await pestana(x.page, 'Diagnóstico');
   dg = await x.page.locator('#diag').inputValue();
-  es(/escrituras enviadas: 1;/.test(dg) && /Sincronización: [^\n]* \(v0\.5\.0\): completa: añadidas 5 canciones en 1 playlist[^\n]*\n  copia previa: antes-de-sincronizar-[^\n]*; registro: sincronizacion-[^\n]*\n  NS - Techno \(pública\): ok; pedidas 5; antes 0; después 5; añadidas 5\n    lote 1: 5; enviado: sí, una vez; respuesta: 201; sello nuevo: sí; relecturas: 1; cuadra: sí; se ven: 5 de 5\n/.test(dg), 'y el diagnóstico lleva la sincronización entera');
+  es(/escrituras enviadas: 1;/.test(dg) && /Sincronización: [^\n]* \(v0\.6\.0\): completa: añadidas 5 canciones en 1 playlist[^\n]*\n  copia previa: antes-de-sincronizar-[^\n]*; registro: sincronizacion-[^\n]*\n  NS - Techno \(pública\): ok; pedidas 5; antes 0; después 5; añadidas 5\n    lote 1: 5; enviado: sí, una vez; respuesta: 201; sello nuevo: sí; relecturas: 1; cuadra: sí; se ven: 5 de 5\n/.test(dg), 'y el diagnóstico lleva la sincronización entera');
   es((await x.page.evaluate(() => JSON.parse(localStorage.getItem('ss.uso')).n)) === x.mundo.spGets + 1, 'la escritura cuenta en las peticiones del día');
   await x.page.locator('.candado').click();
   t = await x.page.locator('.candado-panel').innerText();
@@ -2282,7 +2552,7 @@ async function casosSinc() {
   if (SALIDA) fs.mkdirSync(SALIDA, { recursive: true });
   try {
     // SOLO=escritura pasa solo las pruebas de la sincronización (unos minutos menos); SOLO=tope, las del tope de
-    // búsquedas; SOLO=soundeo, las del lector y la simulación de B; SOLO=sincb, las de sincronizar B; sin SOLO se pasa todo.
+    // búsquedas; SOLO=soundeo, las del lector y la simulación de B; SOLO=sincb, las de sincronizar B; SOLO=estrella, las de «Quitar ★»; sin SOLO se pasa todo.
     const SOLO = process.env.SOLO || '';
     if (!SOLO) {
       await flujoCompleto('Flujo completo en escritorio', { viewport: { width: 1100, height: 800 } }, '-pc');
@@ -2293,6 +2563,7 @@ async function casosSinc() {
     if (!SOLO || SOLO === 'tope') await casosTope();
     if (!SOLO || SOLO === 'soundeo') await casosSoundeo();
     if (!SOLO || SOLO === 'sincb') await casosSincB();
+    if (!SOLO || SOLO === 'estrella') await casosEstrella();
     if (!SOLO || SOLO === 'escritura') await casosSinc();
   } catch (e) { mal++; console.log('  ERROR en las pruebas: ' + (e.stack || e)); }
   await navegador.close();
