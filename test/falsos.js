@@ -1,4 +1,4 @@
-/* Spotify y Dropbox de mentira para las pruebas. Se enchufan al navegador de Playwright:
+/* Spotify, Dropbox y Soundeo de mentira para las pruebas. Se enchufan al navegador de Playwright:
    la app cree que habla con los servicios reales y aquí se apunta todo lo que pide. */
 'use strict';
 const fs = require('fs');
@@ -40,7 +40,13 @@ class Mundo {
       playlists: null,           // null = las comunes de datos.js; si no, una copia propia (D.copiaBiblio())
       subidaFalla: null,         // expresión regular: las subidas a Dropbox cuya ruta la cumpla responden 400
       xml: D.xml(),
+      // soundeo: el Soundeo de mentira (ver sxPagina). {sesion, fav, dow, porPagina, filtros, falla}:
+      //   fav = [{id, texto, dur, estado}] (estado 0 sin descargar, 1 descargada, 2 sin publicar); dow = [ids];
+      //   filtros: 'fav' | 'dow' = esa lista llega con un filtro puesto; falla: {lista, pagina, estado} = esa página responde así.
+      soundeo: null,
     }, opc || {});
+    this.sx = Object.assign({ sesion: true, fav: D.sxFav, dow: D.sxDow, porPagina: 100, filtros: null, falla: null }, this.opc.soundeo || {});
+    this.sxPet = [];             // todo lo que llega a soundeo.com: 'GET /account/favorites?page=2'
     this.playlists = this.opc.playlists || D.playlists;
     this.escrituras = [];        // todo lo que llega a la API de Spotify y no es GET: {metodo, ruta, q, cuerpo, tipo}
     this.eventos = [];           // en orden: 'sp GET /v1/…', 'sp POST /v1/…' y 'db sube /ruta' (para saber qué fue antes)
@@ -74,6 +80,41 @@ class Mundo {
     return { '.tag': 'file', name: a.ruta.split('/').pop(), path_display: a.ruta, path_lower: a.ruta.toLowerCase(), id: 'id:' + a.rev,
       client_modified: a.fecha, server_modified: a.fecha, rev: a.rev, size: Buffer.byteLength(a.texto, 'utf8') };
   }
+  // Una página de favoritos o descargas con el mismo marcado que la web de verdad (visto el 27 nov 2026). [html, estado]
+  sxPagina(cual, pagina) {
+    const X = this.sx, esFav = cual === 'favorites';
+    const e = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const porId = new Map(X.fav.map(f => [f.id, f]));
+    const lista = esFav ? X.fav : X.dow.map(id => porId.get(id) || { id, texto: 'Alguien - Descargada Sin Estrella ' + id + ' (Original Mix)', dur: 200, estado: 1, sinEstrella: true });
+    const total = Math.max(1, Math.ceil(lista.length / X.porPagina));
+    const falla = X.falla && X.falla.lista === cual && X.falla.pagina === pagina ? X.falla.estado : 0;
+    if (falla) return ['<!DOCTYPE html><html><body><h1>Error</h1></body></html>', falla];
+    if (pagina > total) return ['<!DOCTYPE html><html><head><title>Page not found » Soundeo</title></head><body><a href="/account/logout">Logout</a><h1>404</h1></body></html>', 404];
+    const mmss = s => Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+    const item = f => {
+      const baj = esFav ? f.estado === 1 : true;
+      return '<div class="trackitem" data-track-id="' + f.id + '"> <div class="vis listened">&nbsp;</div> <a href="/release/disco-' + f.id + '.html"><span class="cover cover-30"></span></a>' +
+        ' <button class="action stop" data-track-url="https://preview.example/' + f.id + '.mp3" data-track-id="' + f.id + '">&nbsp;</button>' +
+        ' <div class="info"> <strong> <a href="/track/cancion-' + f.id + '.html">' + e(f.texto) + '</a> </strong> <time>' + mmss(f.dur) + '</time>' +
+        ' <span> <a href="/release/disco-' + f.id + '.html">Disco</a> <i>by</i> <a href="/list/releases?labelFilter=1">Sello</a> <i>at</i> 2026-11-01 <i>in</i> <a href="/list/tracks?genreFilter=5">House</a> </span> </div>' +
+        ' <button class="favorites' + (f.sinEstrella ? '' : ' favored') + '" data-track-id="' + f.id + '"></button>' +
+        (f.estado === 2 && esFav
+          ? ' <div class="vote" data-track-id="' + f.id + '"> <button class="ico">&nbsp;</button> <span class="number">1 | </span> <span class="link">Unvote</span> </div>'
+          : ' <div class="download ' + (baj ? 'downloaded' : '') + '"> <a href="javascript:void(0);" class="track-download-lnk" data-track-id="' + f.id + '" data-track-format="1"> <span>MP3</span> <span>11.07 MB</span> </a>' +
+            ' <a href="javascript:void(0);" class="track-download-lnk" data-track-id="' + f.id + '" data-track-format="3"> <span>AIFF</span> <span>48.09 MB</span> </a> </div>') + ' </div>';
+    };
+    const conFiltro = X.filtros === (esFav ? 'fav' : 'dow');
+    const pags = total > 1 ? Array.from({ length: total }, (_, i) => i + 1).map(n => n === pagina ? '<li class="active"><a>' + n + '</a></li>' : '<li class=""><a href="/account/' + cual + '?page=' + n + '">' + n + '</a></li>').join('') : '';
+    return ['<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>' + (esFav ? 'My Favorites' : 'My Downloads') + ' » Soundeo</title></head><body>' +
+      '<div class="header"><a href="/account/logout">Logout</a></div>' +
+      '<div class="filter-block" id="searchFilter"> <input type="text" placeholder="Input 3+ symbols..." name="searchFilter" value="" class="text"> </div>' +
+      '<div class="filter-block" id="genreFilter"> <select name="genreFilter" multiple="multiple"> <option value="5"> House </option> <option value="12"' + (conFiltro ? ' selected="selected"' : '') + '> Deep House </option> </select>' +
+      (conFiltro ? '<a href="#" class="filter-reset pull-right dashed" data-filters="genreFilter">reset</a>' : '') + ' </div>' +
+      '<div id="bpmFilter" class="filter-block" data-min="0" data-max="260"> From<input type="text" class="min text" value="0"> to<input type="text" class="max text" value="260"> </div>' +
+      '<div class="folder"> <div class="rand-faq"> <a href="/faq">FAQ</a> </div> <h2> ' + (esFav ? 'My Favorites' : 'My Downloads') + ' </h2> ' +
+      lista.slice((pagina - 1) * X.porPagina, pagina * X.porPagina).map(item).join(' ') + ' </div>' +
+      '<div class="pagination"> <ul> ' + pags + ' </ul> </div></body></html>', 200];
+  }
   emiteToken(prov, scope) { const t = prov + '-acceso-' + (++this.nTok) + '-' + crypto.randomBytes(6).toString('hex'); this.tokens[prov].add(t); if (prov === 'sp') this.scopeDe.set(t, scope || ''); return t; }
 
   async instala(contexto) {
@@ -86,8 +127,20 @@ class Mundo {
 
     if (req.url().startsWith(SITIO)) {
       let rel = u.pathname.slice('/synchrosound/'.length) || 'index.html';
-      if (['index.html', 'app.js', 'core.js', 'styles.css', 'version.json'].indexOf(rel) < 0) return ruta.fulfill({ status: 404, body: 'no' });
-      return ruta.fulfill({ status: 200, headers: { 'content-type': TIPOS[path.extname(rel)] }, body: fs.readFileSync(path.join(RAIZ, rel)) });
+      if (['index.html', 'app.js', 'core.js', 'styles.css', 'version.json', 'userscript/synchrosound-lector.user.js', 'userscript/synchrosound-lector.app.js'].indexOf(rel) < 0) return ruta.fulfill({ status: 404, body: 'no' });
+      return ruta.fulfill({ status: 200, headers: Object.assign({ 'content-type': TIPOS[path.extname(rel)] }, CORS), body: fs.readFileSync(path.join(RAIZ, rel)) });
+    }
+    // ---- Soundeo ----
+    if (u.host === 'soundeo.com') {
+      this.sxPet.push(metodo + ' ' + u.pathname + u.search);
+      const html = (cuerpo, estado) => ruta.fulfill({ status: estado || 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: cuerpo });
+      const m = /^\/account\/(favorites|downloads)$/.exec(u.pathname);
+      if (metodo !== 'GET') return json({ success: true, result: 'favored' }); // si algo que no es leer llegase aquí, queda apuntado en sxPet
+      if (m) {
+        if (!this.sx.sesion) return ruta.fulfill({ status: 302, headers: { location: 'https://soundeo.com/account/logoreg' } });
+        return html.apply(null, this.sxPagina(m[1], parseInt(u.searchParams.get('page') || '1', 10) || 1));
+      }
+      return html('<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Soundeo</title></head><body><h1>Soundeo</h1><a href="/account/logoreg">Login</a></body></html>', u.pathname === '/account/logoreg' || u.pathname === '/' ? 200 : 404);
     }
     // ---- inicio de sesión ----
     if ((u.host === 'accounts.spotify.com' && u.pathname === '/authorize') || (u.host === 'www.dropbox.com' && u.pathname === '/oauth2/authorize')) {

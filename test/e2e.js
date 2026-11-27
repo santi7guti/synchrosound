@@ -8,6 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const { Mundo, SITIO } = require('./falsos.js');
 const D = require('./datos.js');
+const C = require('../core.js');
 
 let ok = 0, mal = 0;
 // PRIMERA=1 corta en el primer fallo (para comprobar deprisa que un cambio a propósito en el código se detecta).
@@ -62,7 +63,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
 
   // --- arranque ---
   let t = await cuerpo(page);
-  es(/v0\.3\.0/.test(t), 'se ve el número de versión');
+  es(/v0\.4\.0/.test(t), 'se ve el número de versión');
   es(/Solo lectura/.test(t), 'se ve el indicador de solo lectura');
   es(/Sin conectar en este dispositivo/.test(t), 'empieza sin conectar');
   await foto(page, 'cuentas-vacio' + sufijo);
@@ -329,7 +330,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   await pestana(page, 'Diagnóstico');
   const diag = await page.locator('#diag').inputValue();
   es(/Permiso de escritura en este dispositivo: sí/.test(diag) && /Sincronización: sin hacer/.test(diag) && /fase 2, etapa 1/.test(diag), 'el diagnóstico dice si hay permiso de escritura y si se ha sincronizado');
-  es(/SynchroSound 0\.3\.0/.test(diag) && /buscador v5/.test(diag) && /escrituras enviadas: 0/.test(diag) && /Simulación/.test(diag) && diag.indexOf('Dudosas (' + (nD - 2) + ')') >= 0, 'el diagnóstico lleva versión, recuentos y dudosas');
+  es(/SynchroSound 0\.4\.0/.test(diag) && /buscador v5/.test(diag) && /escrituras enviadas: 0/.test(diag) && /Simulación/.test(diag) && diag.indexOf('Dudosas (' + (nD - 2) + ')') >= 0, 'el diagnóstico lleva versión, recuentos y dudosas');
   const usoLs = await page.evaluate(() => JSON.parse(localStorage.getItem('ss.uso')).n);
   es(usoLs === mundo.spGets && diag.indexOf('Peticiones a Spotify hoy: ' + usoLs + ' entre todos tus dispositivos (este: ' + usoLs + ')') >= 0, 'el contador del día coincide con lo que ha recibido Spotify (' + usoLs + ' y ' + mundo.spGets + ')');
   es(/; \d+ peticiones a Spotify\n  playlists releídas: «NS - Techno»\n/.test(diag), 'el diagnóstico dice qué playlists se han releído');
@@ -345,7 +346,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   es(diag.indexOf('usuario_prueba') < 0 && diag.indexOf('ejemplo.test') < 0, 'el diagnóstico no lleva el usuario ni el correo');
   await boton(page, 'Copiar').click();
   const porta = await page.evaluate(() => navigator.clipboard.readText()).catch(() => null);
-  if (porta !== null) es(porta.indexOf('SynchroSound 0.3.0') === 0, 'el botón Copiar copia el diagnóstico');
+  if (porta !== null) es(porta.indexOf('SynchroSound 0.4.0') === 0, 'el botón Copiar copia el diagnóstico');
   await foto(page, 'diagnostico' + sufijo);
 
   // --- el candado ---
@@ -867,6 +868,356 @@ async function casos() {
   await x.ctx.close();
 }
 
+// Tope diario de búsquedas nuevas (v0.4.0) y plazo de las búsquedas sin resultado («no están»: dos o tres semanas).
+async function casosTope() {
+  console.log('Tope de búsquedas');
+  const E = D.esperado;
+  const nA = Object.keys(E.add).length, nD = Object.keys(E.duda).length, nN = E.no.length, nY = E.ya.length;
+  const hoyDe = page => page.evaluate(() => { const d = new Date(), dos = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + dos(d.getMonth() + 1) + '-' + dos(d.getDate()); });
+  const otraVez = async page => { await boton(page, 'Simular otra vez').click(); await page.waitForFunction(() => !window.SS.estado.tarea && !!window.SS.estado.sim, null, { timeout: 120000 }); };
+  const diag = async page => { await pestana(page, 'Diagnóstico'); const t = await page.locator('#diag').inputValue(); await pestana(page, 'rekordbox a Spotify'); return t; };
+
+  // ---------- Hoy ya se han hecho 140 de las 150: solo salen 10 búsquedas y el resto queda «sin buscar» ----------
+  let x = await nuevo();
+  await conecta(x.page, 'Dropbox'); await conecta(x.page, 'Spotify'); await eligeXml(x.page);
+  const dia = await hoyDe(x.page);
+  await x.page.evaluate(d => { const u = JSON.parse(localStorage.getItem('ss.uso')) || { dia: d, n: 0 }; u.dia = d; u.b = 140; localStorage.setItem('ss.uso', JSON.stringify(u)); }, dia);
+  await pestana(x.page, 'rekordbox a Spotify');
+  es(/Búsquedas nuevas en Spotify hoy: 140 de 150 como mucho/.test(await cuerpo(x.page)), 'antes de simular, la pestaña A dice cuántas búsquedas van hoy y el tope');
+  await simula(x.page);
+  let n = await numeros(x.page);
+  let sim = await x.page.evaluate(() => ({ inc: window.SS.estado.sim.incompleta, hechas: window.SS.estado.sim.hechas, total: window.SS.estado.sim.unicas.length, tope: window.SS.estado.cont.tope }));
+  es(x.mundo.busquedas === 10, 'con 140 hechas y tope de 150 solo salen 10 búsquedas nuevas: ' + x.mundo.busquedas);
+  es(n.pend > 0 && n.ya + n.add + n.duda + n.no + n.pend === E.unicas, 'lo que no se pudo buscar queda en su propia lista, «Sin buscar»: ' + JSON.stringify(n));
+  es(n.ya === nY, 'lo que ya está en las playlists no necesita búsquedas y sale igual: ' + n.ya);
+  es(n.no <= nN && n.add <= nA && n.duda <= nD, 'nada se da por «no está» ni se propone sin haberlo buscado');
+  es(!sim.inc && sim.hechas === sim.total && sim.tope === n.pend, 'la simulación no queda incompleta: se recorren todas y se cuentan las que esperan: ' + JSON.stringify(sim));
+  es(await x.page.locator('#tope-aviso').count() === 1 && /sin buscar: hoy se ha llegado al tope de 150 búsquedas nuevas/.test(await x.page.locator('#tope-aviso').innerText()), 'y un aviso lo explica');
+  es(x.mundo.sp429 === 0 && x.consola.length === 0, 'sin cortes de Spotify ni errores');
+  await x.page.locator('.filtro.cat-pend').click();
+  es(await x.page.locator('.fila.cat-pend').count() === n.pend && /Sin buscar todavía: hoy se llegó al tope/.test(await x.page.locator('.fila.cat-pend').first().innerText()), 'la lista enseña esas canciones y por qué');
+  let d = await diag(x.page);
+  es(/Búsquedas nuevas hoy: 150 de 150 como mucho \(tope diario\); canciones que se quedaron sin buscar en esta sesión: \d+/.test(d) && d.indexOf('sin buscar por el tope ' + n.pend) >= 0, 'el diagnóstico lo cuenta');
+  es(await boton(x.page, 'Preparar la sincronización (no envía nada)').isEnabled(), 'lo que sí se resolvió se puede sincronizar');
+  // otra simulación el mismo día: ni una búsqueda más
+  await otraVez(x.page);
+  let n2 = await numeros(x.page);
+  es(x.mundo.busquedas === 10 && JSON.stringify(n2) === JSON.stringify(n), 'simular otra vez el mismo día no gasta ninguna búsqueda y da lo mismo: ' + x.mundo.busquedas);
+  // el uso del día viaja a la memoria común
+  await x.page.waitForFunction(() => { const u = window.SS.estado.mem.uso; return Object.keys(u).some(k => u[k].b === 150); }, null, { timeout: 5000 }).catch(() => {});
+  es(await x.page.evaluate(() => { const u = window.SS.estado.mem.uso; return Object.keys(u).some(k => u[k].b === 150 && u[k].n > 0); }), 'las búsquedas del día se apuntan en la memoria común, junto a las peticiones');
+
+  // ---------- Subir el tope en Cuentas: se guarda y la siguiente simulación termina lo pendiente ----------
+  await pestana(x.page, 'Cuentas');
+  es(await x.page.locator('#tope-busq').inputValue() === '150' && /Hoy llevas 150 de 150\./.test(await cuerpo(x.page)), 'Cuentas enseña el tope (150 de fábrica) y lo que va hoy');
+  await x.page.selectOption('#tope-busq', '500');
+  es(await x.page.evaluate(() => window.SS.estado.mem.ajustes.topeBusq.v) === 500 && /Hoy llevas 150 de 500\./.test(await cuerpo(x.page)), 'al elegir otro tope se guarda como ajuste');
+  await x.page.waitForTimeout(1600);
+  es(JSON.parse(x.mundo.archivos.get('/memoria/memoria.json').texto).ajustes.topeBusq.v === 500, 'y llega a la memoria de Dropbox, común al PC y al iPhone');
+  await pestana(x.page, 'rekordbox a Spotify');
+  await otraVez(x.page);
+  n = await numeros(x.page);
+  es(n.pend === undefined && n.add === nA && n.duda === nD && n.no === nN && n.ya === nY, 'con el tope subido, la siguiente simulación busca lo que faltaba y cuadra con la de siempre: ' + JSON.stringify(n));
+  es(x.mundo.busquedas > 10 && x.mundo.busquedas < 80 && await x.page.locator('#tope-aviso').count() === 0, 'gastando solo las búsquedas que faltaban (' + x.mundo.busquedas + ' en total)');
+  const total = x.mundo.busquedas;
+
+  // ---------- Las búsquedas sin resultado valen dos o tres semanas (antes, de tres a cinco días) ----------
+  const RUTA = '/memoria/cache-busquedas.json';
+  const envejece = dias => { // todas las búsquedas guardadas pasan a tener «dias» días
+    const c = JSON.parse(x.mundo.archivos.get(RUTA).texto);
+    for (const k of Object.keys(c.q)) c.q[k].t = Date.now() - dias * 864e5;
+    x.mundo.pon(RUTA, JSON.stringify(c));
+    return Object.values(c.q).filter(e => !e.r.length).length;
+  };
+  const recarga = async () => { await x.page.reload(); await x.page.waitForFunction(() => !!(window.SS && window.SS.estado.xml), null, { timeout: 15000 }); };
+  let vacias = envejece(6);
+  es(vacias > 0, 'hay búsquedas guardadas que no dieron nada: ' + vacias);
+  await recarga();
+  await simula(x.page);
+  es(x.mundo.busquedas === total, 'a los 6 días una búsqueda sin resultado sigue valiendo: ninguna petición nueva (' + (x.mundo.busquedas - total) + ')');
+  vacias = envejece(13.9);
+  await recarga();
+  await simula(x.page);
+  es(x.mundo.busquedas === total, 'y a punto de cumplir dos semanas, también');
+  vacias = envejece(21.1);
+  await recarga();
+  await simula(x.page);
+  n = await numeros(x.page);
+  es(x.mundo.busquedas - total === vacias, 'pasadas tres semanas se repiten las que no dieron nada, y solo esas (' + (x.mundo.busquedas - total) + ' de ' + vacias + '); las que dieron resultado valen un mes');
+  es(n.add === nA && n.duda === nD && n.no === nN && n.ya === nY, 'y el resultado es el mismo: ' + JSON.stringify(n));
+  await x.ctx.close();
+
+  // ---------- El tope es de todos los dispositivos: si otro ya lo gastó hoy, aquí no sale ninguna búsqueda ----------
+  x = await nuevo();
+  const dia2 = await hoyDe(x.page);
+  x.mundo.pon('/memoria/memoria.json', JSON.stringify({ v: 1, uso: { [dia2 + '|otro']: { n: 310, b: 150, t: Date.now() } } }));
+  await conecta(x.page, 'Dropbox'); await conecta(x.page, 'Spotify'); await eligeXml(x.page);
+  await simula(x.page);
+  n = await numeros(x.page);
+  es(x.mundo.busquedas === 0 && n.pend > 0 && n.ya === nY, 'con las 150 gastadas en otro dispositivo, aquí no sale ninguna búsqueda: ' + JSON.stringify(n));
+  es(/Búsquedas nuevas en Spotify hoy: 150 de 150 como mucho/.test(await cuerpo(x.page)), 'y la pantalla cuenta las del otro dispositivo');
+  // un ajuste que no es de la lista (memoria tocada a mano o de otra versión) no desactiva el tope
+  await x.page.evaluate(() => { window.SS.estado.mem.ajustes.topeBusq = { v: 99999, t: Date.now() }; window.SS.pinta(); });
+  await otraVez(x.page);
+  es(x.mundo.busquedas === 0 && /de 150 como mucho/.test(await cuerpo(x.page)), 'un tope que no es de los ofrecidos no vale: se queda en 150');
+  await x.ctx.close();
+}
+
+// Botón B (v0.4.0): el lector de Soundeo (userscript/), la vuelta con la lista y la simulación, contra un Soundeo
+// de mentira (falsos.js). El cargador se inyecta como lo haría la extensión Userscripts: solo en soundeo.com.
+async function casosSoundeo() {
+  console.log('Soundeo (botón B)');
+  const CARGADOR = fs.readFileSync(path.join(__dirname, '..', 'userscript', 'synchrosound-lector.user.js'), 'utf8');
+  const soloEnSoundeo = codigo => "if (location.hostname === 'soundeo.com') {\n" + codigo + '\n}';
+  // Un doble de Soundeo Feed: hace en la página lo que hace el de verdad y podría estorbar al lector (visto en su
+  // código publicado): guarda sus cosas, envuelve fetch, oculta lo que cuelga de <body> y reescribe el «#» a los 350 ms.
+  const FEED = `(function () {
+    localStorage.setItem('sxfeed:app:code', 'codigo de feed');
+    localStorage.setItem('sxfeed:app:checkedAt', '1700000000000');
+    localStorage.setItem('prefs', '{"ui2":true}');
+    var F = window.fetch; window.__feedFetch = 0;
+    window.fetch = function () { window.__feedFetch++; return F.apply(this, arguments); };
+    document.addEventListener('DOMContentLoaded', function () {
+      var st = document.createElement('style');
+      st.textContent = '#sx-host{position:fixed;left:0;top:0;width:0;height:0;z-index:2147483000}html.sx-open body>*:not(#sx-host){display:none!important}html.sx-open,html.sx-open body{overflow:hidden!important;height:100%!important}';
+      document.head.appendChild(st);
+      var host = document.createElement('div'); host.id = 'sx-host'; document.body.appendChild(host);
+      document.documentElement.classList.add('sx-open');
+      setTimeout(function () { history.replaceState(history.state, '', location.pathname + location.search + '#sx=feed&id=1'); }, 350);
+    });
+  })();`;
+  const E = D.sxEsperado;
+  const IPHONE = Object.assign({}, devices['iPhone 14'], { defaultBrowserType: undefined });
+  const abre = async (opc, conFeed, ctxOpc) => {
+    const x = await nuevo(opc, ctxOpc);
+    await x.ctx.addInitScript({ content: soloEnSoundeo(CARGADOR) });
+    if (conFeed) await x.ctx.addInitScript({ content: soloEnSoundeo(FEED) });
+    return x;
+  };
+  const enPanel = (page, fn) => page.evaluate(fn);
+  const textoPanel = page => page.evaluate(() => document.getElementById('ssync-lector').shadowRoot.querySelector('.caja').innerText);
+  // pulsa «Leer Soundeo» y espera a que el lector termine (cuando ofrece el enlace de vuelta)
+  const leeSoundeo = async x => {
+    await pestana(x.page, 'Soundeo a Spotify');
+    await boton(x.page, 'Leer Soundeo').click();
+    await x.page.waitForURL(/^https:\/\/soundeo\.com\//, { timeout: 15000 });
+    await x.page.waitForFunction(() => { const h = document.getElementById('ssync-lector'); return !!h && !!h.shadowRoot.querySelector('#ssync-volver'); }, null, { timeout: 20000 });
+    return textoPanel(x.page);
+  };
+  const enlaceVuelta = page => page.evaluate(() => document.getElementById('ssync-lector').shadowRoot.querySelector('#ssync-volver').href);
+  const vuelve = async x => {
+    await x.page.locator('#ssync-volver').click();
+    await x.page.waitForURL(u => u.toString().startsWith(SITIO), { timeout: 15000 });
+    await x.page.waitForSelector('.cab');
+  };
+  const guardada = page => page.waitForFunction(() => !!window.SS && !!window.SS.estado.sx && !window.SS.estado.sxLlegada && !window.SS.sxMirando(), null, { timeout: 15000 });
+  const listas = m => Array.from(m.archivos.keys()).filter(k => k.startsWith('/soundeo/')).sort();
+  const soloLee = m => m.sxPet.every(p => /^GET \/(account\/(favorites|downloads)(\?page=\d+)?|account\/logoreg|favicon\.ico)$/.test(p));
+  const simulaB = async page => { await boton(page, await boton(page, 'Simular').count() ? 'Simular' : 'Simular otra vez').click(); await page.waitForFunction(() => !window.SS.estado.tarea && !!window.SS.estado.simB, null, { timeout: 120000 }); };
+  const diag = async page => { await pestana(page, 'Diagnóstico'); const t = await page.locator('#diag').inputValue(); await pestana(page, 'Soundeo a Spotify'); return t; };
+  // un enlace de vuelta hecho a mano, sin comprimir (formato «j»)
+  const enlaceCon = (n, datos, opc) => {
+    const o = Object.assign({ v: 1, n, t: Date.now(), lector: 'prueba', fav: [], dow: [], pag: [1, 1], mal: [] }, datos);
+    const json = JSON.stringify(o);
+    return SITIO + '#soundeo=1.' + n + '.j.' + (opc && opc.cuenta != null ? opc.cuenta : o.fav.length) + '.' + ((opc && opc.suma) || C.sxSuma(json)) + '.' + Buffer.from(json, 'utf8').toString('base64url');
+  };
+  const pide = (page, n, haceMin) => page.evaluate(([n, m]) => localStorage.setItem('ss.sx.pide', JSON.stringify({ n, t: Date.now() - m * 60000 })), [n, haceMin || 0]);
+  const llega = async (page, enlace) => { await page.goto('about:blank'); await page.goto(enlace); await page.waitForSelector('.cab'); await page.waitForSelector('.aviso'); };
+  const MARCA = 'AbCdEfGhIjKlMnOpQrStUv';
+
+  // ---------- El recorrido entero en un iPhone con Soundeo Feed puesto: leer, volver, guardar y simular ----------
+  let x = await abre(null, true, IPHONE);
+  await conecta(x.page, 'Dropbox'); await conecta(x.page, 'Spotify'); await eligeXml(x.page);
+  await pestana(x.page, 'Cuentas');
+  es(await x.page.locator('#sx-instalar').getAttribute('href') === 'userscript/synchrosound-lector.user.js' && /Solo lee, y solo cuando pulsas «Leer Soundeo»/.test(await cuerpo(x.page)), 'Cuentas explica el lector y da el enlace para instalarlo');
+  await pestana(x.page, 'Soundeo a Spotify');
+  await x.page.waitForFunction(() => /Todavía no hay ninguna lista de Soundeo guardada/.test(document.body.innerText), null, { timeout: 15000 });
+  es(await boton(x.page, 'Simular').isDisabled() && /el botón B solo simula: no cambia nada en Spotify ni en Soundeo/.test(await cuerpo(x.page)), 'sin lista de Soundeo no se puede simular, y la pantalla dice que B solo simula');
+  let panel = await leeSoundeo(x);
+  es(/Favoritos leídos/.test(panel) && /Favoritos: 10 \(3 descargados, 1 sin publicar\)\./.test(panel) && /Descargas: 5\./.test(panel) && /Listo: todo leído\. En Soundeo no se ha cambiado nada\./.test(panel), 'el lector lee favoritos y descargas y lo cuenta: ' + panel.replace(/\n+/g, ' | ').slice(0, 200));
+  es(x.mundo.sxPet.filter(p => !/favicon/.test(p)).join(' ; ') === 'GET /account/favorites ; GET /account/favorites ; GET /account/downloads' && soloLee(x.mundo), 'a Soundeo solo salen la página que se abre y dos lecturas (GET): ' + x.mundo.sxPet.join(' ; '));
+  await x.page.waitForTimeout(500); // el doble de Feed reescribe el «#» a los 350 ms
+  let enSx = await x.page.evaluate(() => { const h = document.getElementById('ssync-lector'), r = h.shadowRoot.querySelector('.fondo').getBoundingClientRect(), b = h.shadowRoot.querySelector('#ssync-volver').getBoundingClientRect();
+    return { padre: h.parentElement.tagName, ancho: r.width, alto: r.height, vw: innerWidth, vh: innerHeight, arriba: document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2) === h,
+      claves: Object.keys(localStorage).sort().join(','), code: localStorage.getItem('sxfeed:app:code'), at: localStorage.getItem('sxfeed:app:checkedAt'), prefs: localStorage.getItem('prefs'),
+      sesion: Object.keys(sessionStorage).length, hash: location.hash, cookies: document.cookie, feedAbierto: document.documentElement.classList.contains('sx-open'), feedFetch: window.__feedFetch }; });
+  es(enSx.padre === 'HTML' && enSx.ancho >= enSx.vw - 1 && enSx.alto >= enSx.vh - 1 && enSx.arriba, 'con Soundeo Feed abierto, el panel del lector se ve entero y encima (cuelga de <html>): ' + JSON.stringify([enSx.ancho, enSx.alto, enSx.vw, enSx.vh]));
+  es(enSx.claves === 'prefs,sxfeed:app:checkedAt,sxfeed:app:code' && enSx.code === 'codigo de feed' && enSx.at === '1700000000000' && enSx.prefs === '{"ui2":true}' && enSx.sesion === 0 && enSx.cookies === '',
+    'lo que guarda Soundeo Feed queda igual y el lector no guarda nada en Soundeo: ' + enSx.claves);
+  es(enSx.hash === '#sx=feed&id=1' && enSx.feedAbierto && enSx.feedFetch >= 2, 'Feed sigue a lo suyo (reescribe el «#» y ve pasar las lecturas): el lector ya había leído su marca: ' + JSON.stringify([enSx.hash, enSx.feedAbierto, enSx.feedFetch]));
+  await foto(x.page, 'lector-iphone');
+  const enlace1 = await enlaceVuelta(x.page);
+  es(enlace1.indexOf(SITIO + '#soundeo=1.') === 0 && enlace1.length < 4000, 'el enlace de vuelta va a SynchroSound con la lista en el «#»: ' + enlace1.length + ' caracteres');
+  await vuelve(x);
+  await guardada(x.page);
+  es(x.page.url() === SITIO, 'al volver, la dirección queda limpia');
+  let t = await cuerpo(x.page);
+  es(/Lista de Soundeo recibida: 10 favoritos, 4 descargados\./.test(t) && /Lista de Soundeo guardada en Dropbox: \/soundeo\/soundeo-\d{8}-\d{6}\.json\./.test(t), 'la app la recibe, la comprueba y la guarda en Dropbox');
+  es(/Favoritos de Soundeo leídos el \d\d\/\d\d\/\d{4}.* 10 favoritos, 4 descargados\./.test(t) && await x.page.locator('#sx-avisos').count() === 0, 'y enseña de cuándo es, sin avisos: es una lista completa');
+  let ls1 = listas(x.mundo);
+  let guard = JSON.parse(x.mundo.archivos.get(ls1[0]).texto);
+  es(ls1.length === 1 && guard.v === 1 && guard.fav.length === 10 && guard.dow.length === 5 && guard.mal.length === 0 && guard.pag.join() === '1,1' && guard.lector === '1.0.0' && /^SynchroSound /.test(guard.app) && guard.n === undefined,
+    'el archivo guardado lleva los 10 favoritos, las 5 descargas y de dónde sale');
+  es(JSON.stringify(guard.fav[9]) === JSON.stringify([9000010, 'Rita Polo - Sube Sube (Extended Mix)', 370, 0]) && guard.fav[7][3] === 2, 'cada favorito con su id, su texto, su duración y su estado');
+  es(await x.page.evaluate(() => localStorage.getItem('ss.sx.pide') === null && localStorage.getItem('ss.sx.llegada') === null), 'la marca queda gastada y no queda nada pendiente en el navegador');
+  const petSx = x.mundo.sxPet.length, busB = x.mundo.busquedas;
+  await simulaB(x.page);
+  let n = await numeros(x.page);
+  es(n.ya === E.ya.length && n.add === E.add.length && n.duda === E.duda.length && n.no === E.no.length && n.pend === undefined, 'recuento de la simulación de B: ' + JSON.stringify(n));
+  let est = await x.page.evaluate(() => window.SS.estado.simB.unicas.map(u => ({ id: u.sx.id, e: u.estado, baj: u.sx.baj, sp: u.elegida ? u.elegida.sp.id : null, dest: u.destinos.map(d => d.clave + (d.ya ? '=' : '+')).join(' ') })));
+  const de = id => est.find(e => e.id === id);
+  for (const k of ['ya', 'add', 'duda', 'no']) for (const id of E[k]) es(de(id).e === k, 'el favorito ' + id + ' sale como «' + k + '» (' + de(id).e + ')');
+  es(est.filter(e => e.baj).map(e => e.id).join() === E.descargadas.join(), 'descargadas: las que marca Soundeo y la que solo está en «Mis descargas»');
+  es(de(9000003).dest === 'all= down+' && de(9000004).dest === 'all+ try+' && de(9000005).dest === 'all+ down+' && de(9000002).dest === 'all= try=', 'cada favorito va a Sound All y a Down o Try según esté descargado: ' + de(9000003).dest + ' | ' + de(9000004).dest);
+  es(de(9000004).sp === D.cat.paper.id && de(9000005).sp === D.cat.cobaltExt.id && de(9000009).sp === D.cat.like1.id && de(9000010).sp === D.cat.largaExt.id, 'y se empareja con la canción de Spotify que toca');
+  const filasMapa = await x.page.evaluate(() => Array.from(document.querySelectorAll('.lista.mapa .fila')).map(f => f.querySelector('.fila-titulo').firstChild.textContent + ': ' + (f.querySelector('.fila-sub') || {}).textContent));
+  const linea = k => 'Ya están ' + E[k].ya + ', se añadirían ' + E[k].add + ', dudosas ' + E[k].duda + ', no están ' + E[k].no + '.';
+  es(filasMapa.join(' | ') === 'Sound All: ' + linea('all') + ' | Sound Down: ' + linea('down') + ' | Sound Try: ' + linea('try'), 'el recuento por playlist: ' + filasMapa.join(' | '));
+  t = await cuerpo(x.page);
+  es(/10 favoritos de Soundeo\. Simulación del .*: no se ha cambiado nada en Spotify\./.test(t) && /Iría a: Sound Down\n/.test(t + '\n') && /Iría a: Sound All, Sound Try/.test(t) && /Descargada/.test(t) && /Sin descargar/.test(t), 'la lista de «Se añadirían» dice a qué playlists iría cada una y si está descargada');
+  es(x.mundo.escrituras.length === 0 && x.mundo.sxPet.length === petSx, 'simular no escribe nada en Spotify ni pide nada a Soundeo');
+  es(/Sin Extended en Spotify: se usa la Original; dura 3:35 en Spotify y 6:35 en Soundeo/.test(t) && !/en rekordbox/.test(await x.page.locator('.lista:not(.mapa)').innerText()), 'las notas del buscador hablan de Soundeo, no de rekordbox');
+  await foto(x.page, 'b-iphone');
+  es(x.mundo.busquedas - busB > 0 && x.mundo.busquedas - busB < 25, 'búsquedas de la simulación de B: ' + (x.mundo.busquedas - busB));
+  let d = await diag(x.page);
+  es(/Soundeo: lista \/soundeo\/soundeo-\d{8}-\d{6}\.json, leída el .* \(lector 1\.0\.0\): 10 favoritos, 4 descargados; sin publicar 1; en «Mis descargas» 5; páginas 1\+1; completa/.test(d) &&
+    /Simulación B .*: favoritos 10; ya están 2; se añadirían 5; dudosas 1; no están 2/.test(d) && d.indexOf('  Sound Down: ya 1, añadir 3, dudosas 0, no están 0') > 0, 'el diagnóstico cuenta la lista y la simulación de B');
+  // la simulación de A no se ve afectada, y una respuesta dada en B vale para la misma canción en A
+  await simula(x.page);
+  n = await numeros(x.page);
+  es(n.add === Object.keys(D.esperado.add).length && n.ya === D.esperado.ya.length, 'la simulación de A sigue dando lo suyo: ' + JSON.stringify(n));
+  await pestana(x.page, 'Soundeo a Spotify');
+  await x.page.locator('.fila.cat-add', { hasText: 'Paper Lanterns' }).getByRole('button', { name: 'No es', exact: true }).click();
+  es(await x.page.evaluate(() => { const S = window.SS.estado, cl = 'nora vex|paper lanterns extended mix'; return S.simB.unicas.find(u => u.rb.clave === cl).estado !== 'add' && S.sim.unicas.find(u => u.rb.clave === cl).estado !== 'add' && S.mem.decisiones[cl].no.length > 0; }),
+    'un «No es» dado en B vale también para el archivo de rekordbox de esa misma canción');
+  await x.page.locator('.filtro.cat-no').click();
+  await x.page.locator('.fila', { hasText: 'Paper Lanterns' }).getByRole('button', { name: 'Deshacer mi respuesta', exact: true }).click();
+  es(await x.page.evaluate(() => window.SS.estado.simB.unicas.find(u => u.sx.id === 9000004).estado === 'add' && window.SS.estado.sim.unicas.find(u => u.rb.clave === 'nora vex|paper lanterns extended mix').estado === 'add'), 'y deshacerlo, también');
+  es(x.consola.length === 0, 'sin errores en la consola: ' + x.consola.join(' | '));
+
+  // ---------- Otro dispositivo (el PC) encuentra la lista en Dropbox, sin pasar por Soundeo ----------
+  const ctx2 = await navegador.newContext({ locale: 'es-ES', timezoneId: 'Europe/Madrid' });
+  await x.mundo.instala(ctx2);
+  const p2 = await ctx2.newPage();
+  await p2.goto(SITIO); await p2.waitForSelector('.cab');
+  await conecta(p2, 'Dropbox'); await conecta(p2, 'Spotify');
+  await pestana(p2, 'Soundeo a Spotify');
+  await p2.waitForFunction(() => /Favoritos de Soundeo leídos el/.test(document.body.innerText), null, { timeout: 15000 });
+  es(/10 favoritos, 4 descargados\./.test(await cuerpo(p2)) && x.mundo.sxPet.length === petSx && listas(x.mundo).length === 1, 'en otro dispositivo la lista sale de Dropbox, sin tocar Soundeo ni guardar otra copia');
+  await simulaB(p2);
+  await foto(p2, 'b-pc');
+  n = await numeros(p2);
+  es(n.ya === E.ya.length && n.add === E.add.length && n.duda === E.duda.length && n.no === E.no.length, 'y la simulación da lo mismo: ' + JSON.stringify(n));
+  await ctx2.close();
+
+  // ---------- Lo que no se acepta: enlaces repetidos, cortados, viejos o no pedidos ----------
+  await llega(x.page, enlace1);
+  t = await cuerpo(x.page);
+  es(/La lista de Soundeo no se ha aceptado: no corresponde a una lectura pedida desde este navegador\./.test(t) && listas(x.mundo).length === 1 && x.page.url() === SITIO, 'el mismo enlace por segunda vez no vale: la marca era de un solo uso');
+  const favs2 = [[9000001, 'Soundero - Favorita Bajada (Original Mix)', 300, 1], [9000004, 'Nora Vex - Paper Lanterns (Extended Mix)', 395, 0]];
+  await llega(x.page, enlaceCon(MARCA, { fav: favs2 }));
+  es(/no corresponde a una lectura pedida desde este navegador/.test(await cuerpo(x.page)) && listas(x.mundo).length === 1, 'una lista que nadie ha pedido desde este navegador no se acepta');
+  await pide(x.page, MARCA);
+  await llega(x.page, enlaceCon(MARCA, { fav: favs2 }, { suma: '00000000' }));
+  es(/la suma de control no cuadra/.test(await cuerpo(x.page)) && listas(x.mundo).length === 1 && await x.page.evaluate(() => localStorage.getItem('ss.sx.pide') === null), 'con la suma de control cambiada se rechaza, y la marca queda gastada');
+  await pide(x.page, MARCA);
+  await llega(x.page, enlaceCon(MARCA, { fav: favs2 }, { cuenta: 3 }));
+  es(/el recuento no cuadra/.test(await cuerpo(x.page)) && listas(x.mundo).length === 1, 'si el recuento no cuadra, se rechaza entera');
+  await pide(x.page, MARCA);
+  await llega(x.page, enlaceCon(MARCA, { fav: favs2 }).slice(0, -30));
+  es(/La lista de Soundeo no se ha aceptado/.test(await cuerpo(x.page)) && listas(x.mundo).length === 1, 'un enlace cortado se rechaza');
+  await pide(x.page, MARCA, 31);
+  await llega(x.page, enlaceCon(MARCA, { fav: favs2 }));
+  es(/se pidió hace más de media hora/.test(await cuerpo(x.page)) && listas(x.mundo).length === 1, 'una marca de hace más de media hora ya no vale');
+  await pide(x.page, MARCA);
+  await llega(x.page, enlaceCon(MARCA, { fav: [[9000001, 'A - B', 300, 1], [9000001, 'A - B', 300, 1]] }));
+  es(/un favorito viene repetido/.test(await cuerpo(x.page)) && listas(x.mundo).length === 1, 'una lista con la forma mal (un favorito repetido) se rechaza');
+  await pide(x.page, MARCA);
+  await llega(x.page, enlaceCon(MARCA, { fav: favs2, t: Date.now() - 3 * 3600000 }));
+  es(/la hora de la lectura no cuadra con la petición/.test(await cuerpo(x.page)) && listas(x.mundo).length === 1, 'una lista leída antes de pedirla tampoco');
+  await pide(x.page, MARCA);
+  await llega(x.page, SITIO + '#soundeo=1.' + MARCA + '.j.2');
+  es(/el enlace no tiene la forma esperada/.test(await cuerpo(x.page)) && await x.page.evaluate(() => localStorage.getItem('ss.sx.pide') !== null), 'un enlace sin la forma esperada se rechaza sin gastar la marca');
+  // y una bien hecha, sin comprimir (un navegador sin compresión), sí: pasa a ser la lista vigente
+  await llega(x.page, enlaceCon(MARCA, { fav: favs2, t: Date.now() + 2000, texto: '<img src=x onerror=alert(1)>' }));
+  await guardada(x.page);
+  t = await cuerpo(x.page);
+  es(/Lista de Soundeo recibida: 2 favoritos, 1 descargado\./.test(t) && listas(x.mundo).length === 2 && /Favoritos de Soundeo leídos el .* 2 favoritos, 1 descargado\./.test(t), 'una lista sin comprimir y bien formada se acepta y pasa a ser la vigente');
+  es(JSON.parse(x.mundo.archivos.get(listas(x.mundo)[1]).texto).texto === undefined && await x.page.evaluate(() => window.SS.estado.simB === null), 'lo que no está previsto en la lista no se guarda, y la simulación anterior deja de valer');
+  await x.ctx.close();
+
+  // ---------- Más de una página: 230 favoritos son tres lecturas; 200 justos, una cuarta para asegurarse ----------
+  x = await abre({ soundeo: { fav: D.sxMuchos(230), dow: [] } });
+  await conecta(x.page, 'Dropbox');
+  panel = await leeSoundeo(x);
+  es(/Favoritos: 230 \(77 descargados\)\./.test(panel) && /Favoritos leídos/.test(panel), 'con 230 favoritos lee las tres páginas: ' + panel.replace(/\n+/g, ' | ').slice(0, 120));
+  es(x.mundo.sxPet.filter(p => /favorites/.test(p)).join(' ; ') === 'GET /account/favorites ; GET /account/favorites ; GET /account/favorites?page=2 ; GET /account/favorites?page=3' && soloLee(x.mundo), 'pide las páginas 2 y 3 y ninguna más: ' + x.mundo.sxPet.join(' ; '));
+  const largo230 = (await enlaceVuelta(x.page)).length;
+  await vuelve(x); await guardada(x.page);
+  guard = JSON.parse(x.mundo.archivos.get(listas(x.mundo)[0]).texto);
+  es(guard.fav.length === 230 && new Set(guard.fav.map(f => f[0])).size === 230 && guard.pag.join() === '3,1' && guard.mal.length === 0 && /230 favoritos, 77 descargados/.test(await cuerpo(x.page)), 'y llegan los 230, sin repetir (enlace de ' + largo230 + ' caracteres)');
+  await x.ctx.close();
+  x = await abre({ soundeo: { fav: D.sxMuchos(200), dow: [] } });
+  await conecta(x.page, 'Dropbox');
+  panel = await leeSoundeo(x);
+  es(/Favoritos: 200 /.test(panel) && /Favoritos leídos/.test(panel) && x.mundo.sxPet.filter(p => /favorites\?page/.test(p)).join(' ; ') === 'GET /account/favorites?page=2 ; GET /account/favorites?page=3',
+    'con 200 justos (la última página viene llena) mira si hay una tercera, y que no exista no es un fallo: ' + x.mundo.sxPet.join(' ; '));
+  await x.ctx.close();
+
+  // ---------- Una página que no llega: la lista viaja marcada como incompleta ----------
+  x = await abre({ soundeo: { fav: D.sxMuchos(230), dow: [], falla: { lista: 'favorites', pagina: 2, estado: 500 } } });
+  await conecta(x.page, 'Dropbox');
+  panel = await leeSoundeo(x);
+  es(/Leído, con avisos/.test(panel) && /no se han podido leer todas las páginas de favoritos/.test(panel) && /Favoritos: 100 /.test(panel), 'si una página falla, el lector lo dice: ' + panel.replace(/\n+/g, ' | ').slice(0, 160));
+  await vuelve(x); await guardada(x.page);
+  es(/Ojo con esta lista: no se pudieron leer todas las páginas de favoritos\./.test(await x.page.locator('#sx-avisos').innerText()) && JSON.parse(x.mundo.archivos.get(listas(x.mundo)[0]).texto).mal.join() === 'fav-paginas', 'y la app la guarda con ese aviso a la vista');
+  await x.ctx.close();
+
+  // ---------- Filtros puestos en Soundeo, y descargas que no se pueden leer ----------
+  x = await abre({ soundeo: { filtros: 'fav', falla: { lista: 'downloads', pagina: 1, estado: 500 } } });
+  await conecta(x.page, 'Dropbox');
+  panel = await leeSoundeo(x);
+  es(/Soundeo tiene filtros puestos en tus favoritos/.test(panel) && /no se ha podido leer la lista de descargas/.test(panel) && /Descargas: no se han podido leer/.test(panel), 'filtros puestos y descargas sin leer: los dos avisos');
+  await vuelve(x); await guardada(x.page);
+  t = await x.page.locator('#sx-avisos').innerText();
+  es(/Soundeo tenía filtros puestos en tus favoritos; no se pudo leer la lista de descargas/.test(t) && /10 favoritos, 3 descargados/.test(await cuerpo(x.page)), 'la app lo enseña; lo descargado sale entonces solo de lo que marca la lista de favoritos');
+  await x.ctx.close();
+
+  // ---------- Sin sesión en Soundeo: no se lee nada y la vuelta no lleva lista ----------
+  x = await abre({ soundeo: { sesion: false } });
+  await conecta(x.page, 'Dropbox');
+  panel = await leeSoundeo(x);
+  es(/No has iniciado sesión en Soundeo/.test(panel) && /No se ha leído ni cambiado nada/.test(panel) && await enlaceVuelta(x.page) === SITIO && soloLee(x.mundo), 'sin sesión el lector lo dice y la vuelta no lleva ninguna lista: ' + x.mundo.sxPet.join(' ; '));
+  await x.page.locator('#ssync-lector').getByRole('button', { name: 'Cerrar y quedarme en Soundeo' }).click();
+  es(await x.page.locator('#ssync-lector').count() === 0, '«Cerrar» quita el panel y deja Soundeo como estaba');
+  await x.ctx.close();
+
+  // ---------- Usando Soundeo con normalidad (sin la marca) el cargador no hace nada ----------
+  x = await abre(null, true);
+  for (const dir of ['https://soundeo.com/account/favorites', 'https://soundeo.com/account/favorites#sx=feed&id=3', 'https://soundeo.com/account/favorites#synchrosound=corta', 'https://soundeo.com/account/favorites#synchrosound=' + MARCA + '&otra=cosa']) {
+    await x.page.goto('about:blank'); await x.page.goto(dir);
+    await x.page.waitForTimeout(700);
+  }
+  es(await x.page.locator('#ssync-lector').count() === 0 && !x.mundo.peticiones.find(p => /synchrosound-lector/.test(p.ruta)) && x.mundo.sxPet.filter(p => !/favicon/.test(p)).length === 4 && await x.page.evaluate(() => window.__SSYNC_LECTOR__ === undefined && window.__feedFetch === 0),
+    'sin la marca exacta de SynchroSound no hay panel, ni descarga del lector, ni una sola petición de más');
+  await x.ctx.close();
+
+  // ---------- Una lista de hace días se avisa como vieja; un archivo estropeado no se usa ----------
+  x = await abre();
+  const vieja = { v: 1, t: Date.now() - 3 * 86400000, lector: '1.0.0', fav: D.sxFav.map(f => [f.id, f.texto, f.dur, f.estado]), dow: D.sxDow, pag: [1, 1], mal: [] };
+  x.mundo.pon('/soundeo/soundeo-20261101-100000.json', JSON.stringify(vieja));
+  x.mundo.pon('/soundeo/otra-cosa.json', '{"no":"es una lista"}');
+  await conecta(x.page, 'Dropbox'); await conecta(x.page, 'Spotify');
+  await pestana(x.page, 'Soundeo a Spotify');
+  await x.page.waitForSelector('#sx-avisos', { timeout: 15000 });
+  es(/Ojo con esta lista: se leyó hace más de 24 horas\./.test(await x.page.locator('#sx-avisos').innerText()) && await boton(x.page, 'Simular').isEnabled(), 'una lista de hace tres días se avisa como vieja (y se puede simular con ella)');
+  x.mundo.pon('/soundeo/soundeo-20261120-100000.json', '{"v":1,"t":"mal"}');
+  await boton(x.page, 'Mirar en Dropbox').click();
+  await x.page.waitForSelector('.aviso.error', { timeout: 15000 });
+  es(/La lista «\/soundeo\/soundeo-20261120-100000\.json» no se puede usar: no dice cuándo se leyó\./.test(await cuerpo(x.page)), 'un archivo de lista estropeado no se usa, y se dice cuál es');
+  await x.ctx.close();
+}
+
 async function casosSinc() {
   console.log('Sincronización');
   let x, t, P, w, nPet, dg, ev0, ev, sp, antes, regs, ja, jr, cw, raros, t0, antesItems, preguntas, y, fuera, dato, jm;
@@ -989,7 +1340,7 @@ async function casosSinc() {
   es(t.indexOf(antes[0].ruta.split('/').pop()) >= 0 && t.indexOf(regs[0].ruta.split('/').pop()) >= 0, 'el resultado nombra la copia y el registro');
   await pestana(x.page, 'Diagnóstico');
   dg = await x.page.locator('#diag').inputValue();
-  es(/escrituras enviadas: 1;/.test(dg) && /Sincronización: [^\n]* \(v0\.3\.0\): completa: añadidas 5 canciones en 1 playlist[^\n]*\n  copia previa: antes-de-sincronizar-[^\n]*; registro: sincronizacion-[^\n]*\n  NS - Techno \(pública\): ok; pedidas 5; antes 0; después 5; añadidas 5\n    lote 1: 5; enviado: sí, una vez; respuesta: 201; sello nuevo: sí; relecturas: 1; cuadra: sí; se ven: 5 de 5\n/.test(dg), 'y el diagnóstico lleva la sincronización entera');
+  es(/escrituras enviadas: 1;/.test(dg) && /Sincronización: [^\n]* \(v0\.4\.0\): completa: añadidas 5 canciones en 1 playlist[^\n]*\n  copia previa: antes-de-sincronizar-[^\n]*; registro: sincronizacion-[^\n]*\n  NS - Techno \(pública\): ok; pedidas 5; antes 0; después 5; añadidas 5\n    lote 1: 5; enviado: sí, una vez; respuesta: 201; sello nuevo: sí; relecturas: 1; cuadra: sí; se ven: 5 de 5\n/.test(dg), 'y el diagnóstico lleva la sincronización entera');
   es((await x.page.evaluate(() => JSON.parse(localStorage.getItem('ss.uso')).n)) === x.mundo.spGets + 1, 'la escritura cuenta en las peticiones del día');
   await x.page.locator('.candado').click();
   t = await x.page.locator('.candado-panel').innerText();
@@ -1566,14 +1917,18 @@ async function casosSinc() {
   navegador = await chromium.launch(exe ? { executablePath: exe } : {});
   if (SALIDA) fs.mkdirSync(SALIDA, { recursive: true });
   try {
-    // SOLO=escritura pasa solo las pruebas de la sincronización (unos minutos menos); sin SOLO se pasa todo.
-    if (process.env.SOLO !== 'escritura') {
+    // SOLO=escritura pasa solo las pruebas de la sincronización (unos minutos menos); SOLO=tope, las del tope de
+    // búsquedas; SOLO=soundeo, las del botón B y el lector; sin SOLO se pasa todo.
+    const SOLO = process.env.SOLO || '';
+    if (!SOLO) {
       await flujoCompleto('Flujo completo en escritorio', { viewport: { width: 1100, height: 800 } }, '-pc');
       await flujoCompleto('Flujo completo emulando iPhone', Object.assign({}, devices['iPhone 14'], { defaultBrowserType: undefined }), '-iphone');
       await flujoCompleto('Flujo completo en modo oscuro', { viewport: { width: 900, height: 800 }, colorScheme: 'dark' }, '-oscuro');
       await casos();
     }
-    await casosSinc();
+    if (!SOLO || SOLO === 'tope') await casosTope();
+    if (!SOLO || SOLO === 'soundeo') await casosSoundeo();
+    if (!SOLO || SOLO === 'escritura') await casosSinc();
   } catch (e) { mal++; console.log('  ERROR en las pruebas: ' + (e.stack || e)); }
   await navegador.close();
   console.log('Extremo a extremo: ' + ok + ' comprobaciones bien, ' + mal + ' mal.');

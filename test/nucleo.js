@@ -296,5 +296,57 @@ noSale.forEach(([nombre, cambios, motivo]) => {
 es(!C.puerta(llamada({ ahora: 100000, leida: 100000 - 14999, permiso: permisoDe({ hasta: 200000 }) })).no && !C.puerta(llamada({ leida: 1000 })).no, 'puerta: con la playlist releída hace menos de 15 s, sale');
 es(C.FRESCA_ESCR === 15000 && C.MAX_LOTE === 100 && C.URI_CANCION.test(U(1)) && !C.URI_CANCION.test(U(1) + 'x') && !C.URI_CANCION.test(' ' + U(1)), 'puerta: el tope es 100 y una canción es exactamente spotify:track: más 22 caracteres');
 
+// --- Soundeo (botón B): la lista que trae el lector ---
+{
+  es(C.sxSuma('') === '811c9dc5' && C.sxSuma('a') === 'e40c292c' && C.sxSuma('hola') !== C.sxSuma('holá'), 'suma de control (FNV-1a) con sus valores conocidos');
+  const buena = () => ({ v: 1, n: 'x', t: 1795000000000, lector: '1.0.0', fav: D.sxFav.map(f => [f.id, f.texto, f.dur, f.estado]), dow: D.sxDow.slice(), pag: [1, 1], mal: [] });
+  let v = C.sxValida(buena());
+  es(!v.error && v.lista.fav.length === 10 && v.lista.dow.length === 5 && v.lista.mal.length === 0 && v.lista.n === undefined, 'una lista bien formada se acepta, y la copia limpia no arrastra la marca');
+  es(JSON.stringify(Array.from(C.sxDescargadas(v.lista)).filter(id => D.sxFav.find(f => f.id === id)).sort()) === JSON.stringify(D.sxEsperado.descargadas), 'descargada = marcada así en favoritos o presente en «Mis descargas»');
+  const rota = (cambio, texto) => { const o = buena(); cambio(o); const r = C.sxValida(o); es(!!r.error && !r.lista, texto + ' (' + r.error + ')'); };
+  rota(o => { o.v = 2; }, 'otra versión del lector no se acepta');
+  rota(o => { o.t = 'ayer'; }, 'sin hora de lectura no se acepta');
+  rota(o => { o.fav = 'muchos'; }, 'favoritos que no son una lista');
+  rota(o => { o.fav[3] = [9000004, '', 395, 0]; }, 'un favorito sin texto');
+  rota(o => { o.fav[3] = [9000004, 'A - B', 395, 7]; }, 'un estado que no existe');
+  rota(o => { o.fav[3] = ['9000004', 'A - B', 395, 0]; }, 'un id que no es un número');
+  rota(o => { o.fav[3] = [9000004, 'A - B', 395, 0, 'de más']; }, 'un favorito con campos de más');
+  rota(o => { o.fav[3] = [9000003, 'A - B', 395, 0]; }, 'un favorito repetido');
+  rota(o => { o.fav[3] = [9000004, 'x'.repeat(301), 395, 0]; }, 'un texto desmesurado');
+  rota(o => { o.dow.push(-4); }, 'una descarga con id imposible');
+  rota(o => { o.mal = ['<script>']; }, 'un aviso del lector con caracteres raros');
+  rota(o => { o.fav = Array.from({ length: 5001 }, (_, i) => [i + 1, 'A - B', 100, 0]); }, 'demasiados favoritos');
+  es(!!C.sxValida(null).error && !!C.sxValida([]).error && !!C.sxValida('hola').error, 'lo que no es un objeto no se acepta');
+  v = C.sxValida(Object.assign(buena(), { fav: [], extra: { cualquier: 'cosa' } }));
+  es(!v.error && v.lista.mal.indexOf('fav-vacia') >= 0 && v.lista.extra === undefined && /ningún favorito/.test(C.sxMotivos(v.lista).join()), 'una lista vacía se acepta, pero marcada como no completa; lo no previsto se tira');
+  v = C.sxValida(Object.assign(buena(), { mal: ['fav-paginas', 'dow-error', 'algo-nuevo'] }));
+  es(C.sxMotivos(v.lista).length === 3 && /páginas de favoritos/.test(C.sxMotivos(v.lista)[0]) && /algo-nuevo/.test(C.sxMotivos(v.lista)[2]), 'los avisos del lector se explican, también uno que esta versión no conoce');
+  // el favorito de Soundeo se busca igual que el archivo de rekordbox de la misma canción, y comparten respuestas
+  const fs1 = C.descRb(C.sxPista([1, 'Nora Vex - Paper Lanterns (Extended Mix)', 395, 0]));
+  es(fs1.clave === rb(D.R.paper).clave && fs1.artista === 'Nora Vex' && fs1.tit.base === 'paper lanterns' && fs1.tit.ver.largo === 'ext' && fs1.dur === 395, 'un favorito «Artista - Título (Mezcla)» da la misma clave que su archivo de rekordbox');
+  es(JSON.stringify(C.consultas(fs1)) === JSON.stringify(C.consultas(rb(D.R.paper))), 'y las mismas búsquedas, así que no gasta peticiones nuevas');
+  const fs2 = C.descRb(C.sxPista([2, 'Tom Río, Søren Falk - Cobalt Avenue (Extended Mix)', 402, 1]));
+  es(fs2.art.length >= 4 && C.elige(fs2, todo, {}).seguro && clavePorId[C.elige(fs2, todo, {}).seguro.sp.id] === 'cobaltExt', 'varios artistas separados por comas: encuentra la Extended');
+  const fs3 = C.descRb(C.sxPista([3, 'Un Título Sin Guion', 100, 0]));
+  es(fs3.artista === '' && fs3.nombre === 'Un Título Sin Guion', 'un texto sin « - » queda como título sin artista');
+}
+// --- el lector de Soundeo solo lee (comprobación sobre su código, sin comentarios) ---
+{
+  const fs = require('fs'), path = require('path');
+  // primero los de línea (la cabecera del cargador lleva «/*» dentro de una dirección), luego los de bloque
+  const sinComentarios = t => t.split('\n').map(l => l.replace(/(^|[^:'"])\/\/.*$/, '$1')).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+  const lector = sinComentarios(fs.readFileSync(path.join(__dirname, '..', 'userscript', 'synchrosound-lector.app.js'), 'utf8'));
+  const cargador = sinComentarios(fs.readFileSync(path.join(__dirname, '..', 'userscript', 'synchrosound-lector.user.js'), 'utf8'));
+  es((lector.match(/\bfetch\s*\(/g) || []).length === 1 && /fetch\(ruta, \{ method: 'GET', credentials: 'same-origin'/.test(lector), 'el lector tiene una sola llamada de red y es un GET');
+  es(/const RUTA_OK = \/\^\\\/account\\\/\(favorites\|downloads\)\(\\\?page=\[1-9\]\\d\{0,2\}\)\?\$\/;/.test(lector) && /if \(!RUTA_OK\.test\(ruta\)\) throw/.test(lector), 'y solo admite favoritos y descargas, con o sin página');
+  es(!/XMLHttpRequest|sendBeacon|WebSocket|EventSource|\.submit\s*\(|\.click\s*\(|localStorage|sessionStorage|indexedDB|document\.cookie|\bPOST\b|\bPUT\b|\bDELETE\b|tracks\/favor|track-download|\/vote|history\.|sxfeed|\beval\b|new Function|importScripts|<script/.test(lector),
+    'el lector no tiene otra forma de pedir, enviar, pulsar ni guardar nada, y no menciona nada de Soundeo Feed');
+  es((lector.match(/https?:\/\/[^'"\s)]+/g) || []).every(u => u === 'https://santi7guti.github.io/synchrosound/'), 'la única dirección de fuera que conoce es la de vuelta a SynchroSound');
+  es((cargador.match(/\bfetch\s*\(/g) || []).length === 1 && /credentials: 'omit'/.test(cargador) && /var SRC = 'https:\/\/santi7guti\.github\.io\/synchrosound\/userscript\/synchrosound-lector\.app\.js';/.test(cargador),
+    'el cargador solo descarga el lector, de la web de SynchroSound y sin credenciales');
+  es(!/XMLHttpRequest|localStorage|sessionStorage|document\.cookie|sxfeed|\bPOST\b/.test(cargador) && cargador.indexOf("if (!m) return;") < cargador.indexOf('fetch('), 'y sin la marca de SynchroSound termina antes de hacer nada; no guarda nada');
+  es(/@match\s+https:\/\/soundeo\.com\/\*/.test(fs.readFileSync(path.join(__dirname, '..', 'userscript', 'synchrosound-lector.user.js'), 'utf8')), 'el cargador solo se instala para soundeo.com');
+}
+
 console.log('Núcleo: ' + ok + ' comprobaciones bien, ' + mal + ' mal.');
 process.exit(mal ? 1 : 0);

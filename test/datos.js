@@ -203,4 +203,30 @@ const esperado = {
   sinRepartir: ['like1', 's2', 's1'],
 };
 
-module.exports = { cat, catalogo, relleno, R, rbPistas, arbol, xml, xmlLargo, largas, aAnadir, YO, playlist, playlists, copiaBiblio, likes, esperado };
+// ---- Soundeo de mentira (botón B) ----
+// Favoritos tal como los enseña Soundeo: «Artistas - Título (Mezcla)». estado: 0 sin descargar, 1 descargada, 2 sin publicar.
+const sxFav = [
+  { id: 9000001, texto: 'Soundero - Favorita Bajada (Original Mix)', dur: 300, estado: 1 },       // ya en Sound All y Sound Down
+  { id: 9000002, texto: 'Soundero - Favorita Por Probar (Original Mix)', dur: 301, estado: 0 },   // ya en Sound All y Sound Try
+  { id: 9000003, texto: 'Soundero - Favorita Ya Repartida (Original Mix)', dur: 302, estado: 1 }, // en Sound All; falta en Sound Down
+  { id: 9000004, texto: 'Nora Vex - Paper Lanterns (Extended Mix)', dur: 395, estado: 0 },        // la misma que en rekordbox: a All y Try
+  { id: 9000005, texto: 'Tom Río, Søren Falk - Cobalt Avenue (Extended Mix)', dur: 402, estado: 1 }, // a All y Down
+  { id: 9000006, texto: 'Harlan Pike - Midnigth Train', dur: 300, estado: 0 },                    // dudosa (errata en el título)
+  { id: 9000007, texto: 'DJ Nadie - Robot Lento (DJ Nadie TOOL)', dur: 245, estado: 0 },          // no está en Spotify
+  { id: 9000008, texto: 'Otto Blau - Sunrise (Original Mix)', dur: 250, estado: 2 },              // sin publicar en Soundeo y no está en Spotify
+  { id: 9000009, texto: 'Iris Mar - Solo Me Gusta (Original Mix)', dur: 200, estado: 0 },         // está en sus likes: sale sin buscar
+  // Soundeo no la marca como descargada en favoritos, pero está en «Mis descargas»: cuenta como descargada
+  { id: 9000010, texto: 'Rita Polo - Sube Sube (Extended Mix)', dur: 370, estado: 0 },
+];
+// «Mis descargas»: cuatro favoritos y una que ya no tiene estrella.
+const sxDow = [9000001, 9000003, 9000005, 9000010, 9000099];
+// Qué tiene que salir de la simulación del botón B.
+const sxEsperado = {
+  ya: [9000001, 9000002], add: [9000003, 9000004, 9000005, 9000009, 9000010], duda: [9000006], no: [9000007, 9000008],
+  descargadas: [9000001, 9000003, 9000005, 9000010],
+  all: { ya: 3, add: 4, duda: 1, no: 2 }, down: { ya: 1, add: 3, duda: 0, no: 0 }, try: { ya: 1, add: 2, duda: 1, no: 2 },
+};
+// Muchos favoritos, para probar las páginas (100 por página).
+const sxMuchos = n => Array.from({ length: n }, (_, i) => ({ id: 9100000 + i, texto: 'Artista Relleno ' + (i % 7) + ' - Relleno ' + (i + 1) + ' (Original Mix)', dur: 181 + (i % 190), estado: i % 3 === 0 ? 1 : 0 }));
+
+module.exports = { cat, catalogo, relleno, R, rbPistas, arbol, xml, xmlLargo, largas, aAnadir, YO, playlist, playlists, copiaBiblio, likes, esperado, sxFav, sxDow, sxEsperado, sxMuchos };

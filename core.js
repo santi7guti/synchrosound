@@ -651,9 +651,76 @@
     return { ruta: '/playlists/' + x.pase.id + '/items', uris };
   }
 
+  // ---------- Soundeo (botón B): la lista de favoritos que trae el lector ----------
+  /* El lector (userscript/) lee Soundeo en el iPhone y manda la lista a la app dentro de un enlace. Aquí está lo
+     que no depende del navegador: la suma de control, la comprobación de la forma y el paso a «pista» para
+     el buscador. Cada favorito viaja como [id, «Artistas - Título (Mezcla)», segundos, estado], con
+     estado 0 = sin descargar, 1 = descargada, 2 = aún no publicada (no se puede descargar). */
+  const SX_VERSION = 1, SX_MAX_FAV = 5000, SX_MAX_DOW = 20000;
+  const SX_MOTIVOS = {
+    'fav-filtros': 'Soundeo tenía filtros puestos en tus favoritos',
+    'fav-paginas': 'no se pudieron leer todas las páginas de favoritos',
+    'fav-vacia': 'Soundeo no enseñó ningún favorito',
+    'fav-marcado': 'algún favorito venía con una forma que el lector no conoce',
+    'dow-error': 'no se pudo leer la lista de descargas',
+    'dow-filtros': 'Soundeo tenía filtros puestos en tus descargas',
+    'dow-paginas': 'no se pudieron leer todas las páginas de descargas',
+  };
+  // Suma de control (FNV-1a de 32 bits) del texto que viaja en el enlace: detecta un enlace cortado o cambiado.
+  function sxSuma(texto) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < texto.length; i++) { h ^= texto.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return ('0000000' + h.toString(16)).slice(-8);
+  }
+  const entero = (v, min, max) => typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max;
+  /* Comprueba la forma de lo que manda el lector (o de una lista guardada). Devuelve {error} o {lista}; la lista
+     es una copia limpia, sin nada que no esté previsto. */
+  function sxValida(o) {
+    const mal = m => ({ error: m });
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return mal('no es una lista de Soundeo');
+    if (o.v !== SX_VERSION) return mal('es de otra versión del lector (' + String(o.v).slice(0, 12) + ')');
+    if (!entero(o.t, 1, 8640000000000000)) return mal('no dice cuándo se leyó');
+    if (!Array.isArray(o.fav) || o.fav.length > SX_MAX_FAV) return mal('los favoritos no tienen la forma esperada');
+    if (!Array.isArray(o.dow) || o.dow.length > SX_MAX_DOW) return mal('las descargas no tienen la forma esperada');
+    const fav = [], vistos = new Set();
+    for (const f of o.fav) {
+      if (!Array.isArray(f) || f.length !== 4 || !entero(f[0], 1, Number.MAX_SAFE_INTEGER) || typeof f[1] !== 'string' || !f[1].trim() || f[1].length > 300 ||
+          !entero(f[2], 0, 86400) || !entero(f[3], 0, 2)) return mal('un favorito no tiene la forma esperada');
+      if (vistos.has(f[0])) return mal('un favorito viene repetido (' + f[0] + ')');
+      vistos.add(f[0]);
+      fav.push([f[0], f[1].replace(/\s+/g, ' ').trim(), f[2], f[3]]);
+    }
+    const dow = [];
+    for (const d of o.dow) { if (!entero(d, 1, Number.MAX_SAFE_INTEGER)) return mal('una descarga no tiene la forma esperada'); dow.push(d); }
+    const pag = Array.isArray(o.pag) && o.pag.length === 2 && o.pag.every(x => entero(x, 0, 999)) ? o.pag.slice() : [0, 0];
+    const motivos = [];
+    if (o.mal != null) {
+      if (!Array.isArray(o.mal) || o.mal.length > 12) return mal('los avisos del lector no tienen la forma esperada');
+      for (const m of o.mal) { if (typeof m !== 'string' || !/^[a-z0-9-]{1,40}$/.test(m)) return mal('un aviso del lector no tiene la forma esperada'); if (motivos.indexOf(m) < 0) motivos.push(m); }
+    }
+    if (!fav.length && motivos.indexOf('fav-vacia') < 0) motivos.push('fav-vacia');
+    return { lista: { v: SX_VERSION, t: o.t, lector: typeof o.lector === 'string' ? o.lector.slice(0, 20) : '', fav, dow, pag, mal: motivos } };
+  }
+  // Por qué una lista no vale como «completa» (vacío = vale). «vieja» la añade la app, que es la que sabe la hora.
+  function sxMotivos(lista) {
+    return (lista.mal || []).map(m => SX_MOTIVOS[m] || 'el lector avisó de «' + m + '»');
+  }
+  // ¿Está descargada? Lo dice el propio favorito (así lo marca Soundeo) o la lista «Mis descargas».
+  function sxDescargadas(lista) {
+    const s = new Set(lista.dow);
+    lista.fav.forEach(f => { if (f[3] === 1) s.add(f[0]); });
+    return s;
+  }
+  // «Artistas - Título (Mezcla)» → una pista con la forma de las de rekordbox, para el mismo buscador.
+  function sxPista(f) {
+    const texto = f[1], i = texto.indexOf(' - ');
+    return { id: 'sx' + f[0], artist: i > 0 ? texto.slice(0, i) : '', name: i > 0 ? texto.slice(i + 3) : texto, dur: f[2] || 0, remixer: '' };
+  }
+
   return {
     PREFIJO_DESTINO, URI_CANCION, MAX_LOTE, FRESCA_ESCR, destinoMal, puerta,
     MATCHER, norm, parecido, mmss, parseTitulo, descRb, descSp, minSp, claveCancion, puntua, elige, yaEsta, explica, cercanas, aspecto,
     consultas, consultaExtended, leeRekordbox, nombreDestino, propMapa, buscaPorNombre, sinRepartir,
+    SX_VERSION, sxSuma, sxValida, sxMotivos, sxDescargadas, sxPista,
   };
 });

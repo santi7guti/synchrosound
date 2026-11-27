@@ -130,6 +130,7 @@ select, input[type="date"], input[type="text"] {
 .fila.cat-add { border-left-color: var(--add); }
 .fila.cat-duda { border-left-color: var(--duda); }
 .fila.cat-no { border-left-color: var(--no); }
+.fila.cat-pend { border-left-color: var(--tinta2); }
 .fila-cuerpo { min-width: 0; flex: 1; }
 .fila-titulo { font-weight: 600; overflow-wrap: anywhere; }
 .fila-sub { color: var(--tinta2); font-size: 15px; overflow-wrap: anywhere; margin-top: 2px; }
@@ -142,13 +143,14 @@ select, input[type="date"], input[type="text"] {
 .mapa-sel { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
 .mapa-sel select { min-width: 0; width: min(100%, 360px); }
 
-/* la tira de cuatro colores: cuánto hay de cada cosa, de un vistazo */
+/* la tira de colores: cuánto hay de cada cosa, de un vistazo (gris = sin buscar por el tope diario) */
 .tira { display: flex; height: 10px; margin: 8px 0 4px; background: var(--linea); border-radius: 2px; overflow: hidden; gap: 1px; }
 .tramo { flex: 0 0 0; min-width: 3px; }
 .tramo.ya { background: var(--ya); }
 .tramo.add { background: var(--add); }
 .tramo.duda { background: var(--duda); }
 .tramo.no { background: var(--no); }
+.tramo.pend { background: var(--tinta2); }
 .tramo.vacio { background: var(--linea); }
 
 .filtros { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 12px 0; }
@@ -160,11 +162,13 @@ select, input[type="date"], input[type="text"] {
 .filtro.cat-add { border-top-color: var(--add); }
 .filtro.cat-duda { border-top-color: var(--duda); }
 .filtro.cat-no { border-top-color: var(--no); }
+.filtro.cat-pend { border-top-color: var(--tinta2); }
 .filtro.activo { color: var(--tinta); border-color: var(--tinta); }
 .filtro.activo.cat-ya { border-top-color: var(--ya); }
 .filtro.activo.cat-add { border-top-color: var(--add); }
 .filtro.activo.cat-duda { border-top-color: var(--duda); }
 .filtro.activo.cat-no { border-top-color: var(--no); }
+.filtro.activo.cat-pend { border-top-color: var(--tinta2); }
 .filtro-num { display: block; font: 600 26px/1 var(--rotulo); color: var(--tinta); margin-bottom: 3px; font-variant-numeric: tabular-nums; }
 
 /* tarea en marcha */
