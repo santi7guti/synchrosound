@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.4.0';
+  const VERSION = '0.5.0';
   const C = window.SSCore;
 
   const CFG = {
@@ -96,7 +96,7 @@
     mem: null, memRev: null, memLista: false,
     cache: null, cacheSucia: false,
     sim: null, simFiltro: 'add', abiertas: {},
-    sx: null, sxMirado: false, sxLlegada: ls.get('ss.sx.llegada'), simB: null, simBFiltro: 'add',
+    sx: null, sxMirado: false, sxLlegada: ls.get('ss.sx.llegada'), simB: null, simBFiltro: 'add', planB: null, planBVer: null, manoAyuda: false,
     c: null, cOcultas: false,
     copias: null, ultimaCopia: null,
     tarea: null, parar: false, candado: false,
@@ -267,8 +267,12 @@
   const algunaEscritura = () => !!S.sp && String(S.sp.scope || '').split(/\s+/).some(p => PERMISOS_ESCRITURA.indexOf(p) >= 0);
   function desconecta(prov) {
     S[prov] = null; ls.del('ss.' + prov);
-    if (prov === 'sp') { S.yo = null; ls.del('ss.yo'); S.lib = null; S.sim = null; S.c = null; S.plan = null; }
-    else { S.dbNombre = ''; S.archivos = null; S.xml = null; S.mem = null; S.memRev = null; S.memLista = false; S.cache = null; S.libCache = undefined; S.copias = null; }
+    if (prov === 'sp') { S.yo = null; ls.del('ss.yo'); S.lib = null; S.sim = null; S.c = null; S.plan = null; S.simB = null; S.planB = null; }
+    else {
+      S.dbNombre = ''; S.archivos = null; S.xml = null; S.mem = null; S.memRev = null; S.memLista = false; S.cache = null; S.libCache = undefined; S.copias = null;
+      // sin memoria no hay simulación ni plan que valgan (y la lista de Soundeo se lee de Dropbox)
+      S.sim = null; S.plan = null; S.simB = null; S.planB = null; S.sx = null; S.sxMirado = false;
+    }
     aviso(NOMBRE[prov] + ' desconectado de este dispositivo.');
   }
 
@@ -396,8 +400,8 @@
        playlist y un lote no se puede repetir.
      - pase: un lote concreto (una playlist y su lista exacta de canciones). Vale para una llamada y se gasta al
        usarlo, salga o no. */
-  let permiso = null; // {hasta, copia, pls: Map(id de playlist -> Set(uris que aún pueden salir)), lotes}
-  let pase = null;    // {id, uris}
+  let permiso = null; // {hasta, copia, pls: Map(id de playlist -> Set(uris que aún pueden salir)), lotes; y en B, quita: Map(id -> Set(uris que aún se pueden quitar)), lotesQ}
+  let pase = null;    // {id, uris} para añadir; {id, uris, quita: true} para quitar
   /* ¿Se puede escribir en esa playlist? Tiene que ser tuya, llamarse «NS - …» u «OG - …» y ser la pareja de una
      (y solo una) playlist de rekordbox en el mapa (C.destinoMal). Devuelve por qué no, o '' si se puede. La usan
      la puerta y la pantalla de confirmación: lo que la pantalla deja marcar es lo que la puerta deja pasar. */
@@ -429,20 +433,47 @@
     return 'la app escribió en ella hace menos de dos minutos y no pudo comprobar del todo cómo quedó: espera a las ' +
       new Date(t + ENFRIA + 59000).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }) + ' y simula otra vez';
   }
-  const destinoValido = id => destinoFijo(id) || enfriando(id, permiso ? permiso.desde : 0);
+  // Las tres playlists de Soundeo (botón B): cuáles de sus papeles (all, down, try) apuntan a esa playlist en el mapa.
+  function papelesDe(id) {
+    if (!S.lib) return [];
+    const s = soundeoActual();
+    return SOUNDEO.map(x => x[0]).filter(k => s[k] && s[k].id === id);
+  }
+  // ¿Se puede escribir en ella como playlist de Soundeo? '' = sí (C.destinoSxMal: propia, con su nombre y con un solo papel).
+  function destinoSx(id) {
+    const pl = S.lib ? S.lib.playlists.find(x => x.id === id) : null, ps = papelesDe(id);
+    return C.destinoSxMal(pl || null, ps[0], ps.length);
+  }
+  // Para añadir vale una «NS -» u «OG -» del mapa (botón A) o una de las tres de Soundeo (botón B). Para quitar, solo estas (ver spotify).
+  // Con una sincronización en curso, cada botón solo puede escribir en lo suyo: A no llega a una de Soundeo ni B a una «NS -» u «OG -».
+  const destinoValido = id => {
+    const a = destinoFijo(id);
+    const mal = permiso && permiso.b === true ? destinoSx(id) : permiso && permiso.b === false ? a : (a && papelesDe(id).length ? destinoSx(id) : a);
+    return mal || enfriando(id, permiso ? permiso.desde : 0);
+  };
   /* Todas las llamadas a la API de Spotify pasan por aquí. Los GET salen. De lo demás solo sale lo que aprueba
-     C.puerta() (core.js): POST /playlists/{id}/items a una playlist válida y confirmada, con canciones confirmadas
-     y con la copia guardada. Lo que se envía (ruta y canciones) es lo que devuelve la puerta, no lo que traiga
-     quien llama; y al aprobar, la puerta tacha esas canciones: no vuelven a salir hacia esa playlist. Nunca PUT
-     ni DELETE. El resto se corta antes de llegar a la red.
+     una de las dos puertas de core.js:
+       C.puerta(): POST /playlists/{id}/items a una playlist válida y confirmada, con canciones confirmadas y con
+         la copia guardada (añadir);
+       C.puertaQuita(): DELETE /playlists/{id}/items, solo en «Sound All», «Sound Down» o «Sound Try», solo con las
+         canciones confirmadas para quitar de esa playlist (quitar). A esta puerta solo se llega con un pase de
+         quitar; cualquier otro DELETE va a la de añadir, que lo rechaza.
+     Lo que se envía (método, ruta y canciones) es lo que devuelve la puerta, no lo que traiga quien llama; y al
+     aprobar, la puerta tacha esas canciones: no vuelven a salir. Nunca PUT. El resto se corta antes de llegar a la red.
      Una escritura nunca se reintenta sola: si falla, o si no se sabe si llegó, quien la pidió relee y compara. */
   async function spotify(metodo, ruta, opts) {
     const escribe = metodo !== 'GET';
-    let destino = ruta, lote = null;
+    let destino = ruta, lote = null, quita = false;
     if (escribe) {
       const p = pase;
       pase = null; // el pase se gasta siempre, salga o no
-      const g = C.puerta({ metodo, ruta, cuerpo: opts && opts.cuerpo, pase: p, permiso, ahora: Date.now(), leida: opts && opts.leida, concedido: tieneEscritura(), destino: destinoValido });
+      let g;
+      if (metodo === 'DELETE' && p && p.quita === true) {
+        const pl = S.lib ? S.lib.playlists.find(x => x.id === p.id) : null, ps = papelesDe(p.id);
+        g = C.puertaQuita({ metodo, ruta, cuerpo: opts && opts.cuerpo, pase: p, permiso, ahora: Date.now(), leida: opts && opts.leida, concedido: tieneEscritura(),
+          playlist: pl ? { nombre: pl.nombre, propia: pl.propia } : null, papel: ps[0], papeles: ps.length, enfria: enfriando(p.id, permiso ? permiso.desde : 0) });
+      } else g = C.puerta({ metodo, ruta, cuerpo: opts && opts.cuerpo, pase: p, permiso, ahora: Date.now(), leida: opts && opts.leida, concedido: tieneEscritura(), destino: destinoValido });
+      quita = g.quita === true;
       if (g.no || !g.ruta || !Array.isArray(g.uris)) {
         S.cont.spBloqueadas++;
         throw new Error('Bloqueado: esta versión no envía esa escritura a Spotify (' + metodo + ' ' + String(ruta).split('?')[0] + '): ' + (g.no || 'la puerta no la ha aprobado') + '.');
@@ -460,7 +491,7 @@
       spUltima = Date.now();
       const tok = await token('sp');
       // cache 'no-store': ni una lectura ni una escritura salen de la caché del navegador ni se guardan en ella.
-      const ini = { method: escribe ? 'POST' : 'GET', headers: { Authorization: 'Bearer ' + tok }, cache: 'no-store' };
+      const ini = { method: !escribe ? 'GET' : quita ? 'DELETE' : 'POST', headers: { Authorization: 'Bearer ' + tok }, cache: 'no-store' };
       // Una petición que no responde no se queda colgada para siempre: a los 30 s se corta (y si era una escritura,
       // se trata como «no se sabe si llegó»: no se repite, se relee).
       const corta = typeof AbortController === 'function' ? new AbortController() : null;
@@ -470,7 +501,7 @@
         // (el equipo se suspendió, por ejemplo), la lectura previa ya no es «de ahora mismo» y la escritura no sale.
         if (!(Date.now() - opts.leida < FRESCA_ESCR)) throw new Error('No enviada: ha pasado demasiado tiempo desde que se releyó la playlist.');
         ini.headers['Content-Type'] = 'application/json';
-        ini.body = JSON.stringify({ uris: lote });
+        ini.body = JSON.stringify(quita ? { items: lote.map(u => ({ uri: u })) } : { uris: lote });
         S.cont.spEscr++; cuentaPeticion(); // se cuenta al enviarla: aunque falle la red, puede haber llegado
       }
       let r;
@@ -479,7 +510,7 @@
       catch (e) {
         clearTimeout(reloj);
         if (escribe) {
-          const err = new Error('Se cortó la conexión con Spotify al enviar la escritura');
+          const err = new Error('Se cortó la conexión con Spotify al enviar la ' + (quita ? 'petición de quitar' : 'escritura'));
           err.servicio = 'Spotify'; err.incierta = true;
           throw err;
         }
@@ -695,7 +726,7 @@
       }
     }
     S.lib = { leida: Date.now(), yo: S.yo, playlists, likes, idx: null, lectura: L };
-    S.c = null; S.plan = null;
+    S.c = null; S.plan = null; S.planB = null;
     return S.lib;
   }
   const textoLectura = L => (L ? 'playlists releídas ' + L.releidas + ', sin cambios ' + L.iguales + '; likes ' + L.likes + '; ' + L.peticiones + ' peticiones a Spotify' + (L.semilla ? '; partiendo de la copia ' + L.semilla : '') : '');
@@ -793,7 +824,8 @@
   }
 
   // ---------------- memoria de la app (en Dropbox, común a PC e iPhone) ----------------
-  const SECCIONES = ['mapa', 'soundeo', 'decisiones', 'ocultas', 'pares', 'ajustes', 'uso'];
+  // «sx» = el registro del botón B: qué canción puso o emparejó la app en cada playlist de Soundeo, por favorito.
+  const SECCIONES = ['mapa', 'soundeo', 'decisiones', 'ocultas', 'pares', 'ajustes', 'uso', 'sx'];
   function memVacia() { const m = { v: 1 }; SECCIONES.forEach(s => { m[s] = {}; }); return m; }
   // Une dos memorias: en cada dato gana el más reciente.
   function fusiona(a, b) {
@@ -814,7 +846,25 @@
     if (r) { S.mem = fusiona(JSON.parse(r.texto), S.mem); S.memRev = (r.meta && r.meta.rev) || null; }
     else { S.mem = fusiona(S.mem, null); S.memRev = null; }
     S.memLista = true;
+    sxRecupera();
     sincronizaCorte();
+  }
+  /* El registro de B (sección «sx») se guarda también en este navegador. Hasta la v0.4.0 la app no conocía esa sección
+     y, al guardar la memoria, la dejaba fuera: una pestaña antigua abierta en otro dispositivo borraría el registro.
+     Y si un guardado en Dropbox falla, lo apuntado no se pierde. Al cargar, lo que aquí sea más reciente vuelve. */
+  const SX_LOCAL = 'ss.sx.reg';
+  function sxGuardaLocal() { if (S.mem) ls.set(SX_LOCAL, S.mem.sx || {}); }
+  function sxRecupera() {
+    const g = ls.get(SX_LOCAL);
+    let n = 0;
+    if (g && typeof g === 'object') {
+      Object.keys(g).forEach(id => {
+        const x = S.mem.sx[id], y = g[id];
+        if (y && typeof y === 'object' && (!x || (y.t || 0) > (x.t || 0))) { S.mem.sx[id] = y; n++; }
+      });
+    }
+    if (n) { S.sxRecuperados = (S.sxRecuperados || 0) + n; memToca(); }
+    sxGuardaLocal();
   }
   async function aseguraMem() { if (!S.memLista) await memCarga(); }
   let memReloj = null, memOcupada = false, memSucia = false;
@@ -1032,6 +1082,7 @@
     }
     // «lib» dice con qué lectura de Spotify se ha hecho: solo se sincroniza si sigue siendo la misma.
     const sim = { fecha: Date.now(), xmlFecha: S.xml.fecha, lib: S.lib.leida, unicas: Array.from(unicas.values()), hechas: 0, incompleta: true, mapa };
+    migraClaves(sim.unicas);
     S.sim = sim;
     try {
       for (const u of sim.unicas) {
@@ -1064,12 +1115,12 @@
     if (memSucia) memToca();
   }
   function cuenta(sim) {
-    const c = { ya: 0, add: 0, duda: 0, no: 0, pend: 0 };
+    const c = { ya: 0, add: 0, duda: 0, no: 0, pend: 0, mano: 0 };
     sim.unicas.forEach(u => { if (u.estado) c[u.estado]++; });
     return c;
   }
   // Estado de una canción dentro de una playlist concreta.
-  const estadoEn = (u, d) => (d.ya ? 'ya' : u.estado === 'pend' ? 'pend' : u.elegida ? 'add' : u.dudosas.length ? 'duda' : 'no');
+  const estadoEn = (u, d) => (d.ya ? 'ya' : d.mano ? 'mano' : u.estado === 'pend' ? 'pend' : u.elegida ? 'add' : u.dudosas.length ? 'duda' : 'no');
   function porPlaylist(sim) {
     const out = new Map();
     (S.xml ? S.xml.datos.delMapa : []).forEach(pl => out.set(pl.clave, { pl, ya: 0, add: 0, duda: 0, no: 0, pend: 0, total: 0 }));
@@ -1093,9 +1144,10 @@
     d.t = Date.now();
     S.mem.decisiones[u.rb.clave] = d;
     memToca();
-    S.plan = null; // cambia lo que se añadiría: la sincronización hay que prepararla otra vez
+    S.plan = null; S.planB = null; // cambia lo que se añadiría: la sincronización hay que prepararla otra vez
     reevalua(u, indices());
     otrasIguales(u);
+    replanB(S.simB);
     pinta();
   }
   // La misma canción puede estar en la simulación de A y en la de B (comparten respuestas): se repasa en las dos.
@@ -1119,9 +1171,10 @@
     d.si = null; d.m = null; d.nada = true; d.t = Date.now();
     S.mem.decisiones[u.rb.clave] = d;
     memToca();
-    S.plan = null;
+    S.plan = null; S.planB = null;
     reevalua(u, indices());
     otrasIguales(u);
+    replanB(S.simB);
     aviso('Hecho. «' + u.rb.nombre + '» pasa a «' + CAT[u.estado] + '» y no se volverá a preguntar; ahí puedes deshacerlo.');
   }
   // «No es» sobre una pareja que la app daba por buena (segura o «ya está»).
@@ -1215,7 +1268,7 @@
     const meta = await dbxSube(SX_CARPETA + '/' + nombreLista(v.lista.t), JSON.stringify(cuerpo), 'add', true);
     S.sx = { ruta: meta.path_display || (SX_CARPETA + '/' + nombreLista(v.lista.t)), lista: v.lista, visto: Date.now() };
     S.sxLlegada = null; ls.del('ss.sx.llegada');
-    S.sxMirado = true; S.simB = null;
+    S.sxMirado = true; S.simB = null; S.planB = null;
     aviso('Lista de Soundeo guardada en Dropbox: ' + S.sx.ruta + '.');
     return true;
   }
@@ -1223,14 +1276,14 @@
   async function sxCarga() {
     const arch = (await listaCarpeta(SX_CARPETA, false)).filter(a => /^soundeo-\d{8}-\d{6}( \(\d+\))?\.json$/.test(a.nombre)).sort((a, b) => (a.nombre < b.nombre ? 1 : a.nombre > b.nombre ? -1 : 0));
     S.sxMirado = true;
-    if (!arch.length) { S.sx = null; S.simB = null; return null; }
+    if (!arch.length) { S.sx = null; S.simB = null; S.planB = null; return null; }
     if (S.sx && S.sx.ruta === arch[0].ruta) { S.sx.visto = Date.now(); return S.sx; }
     const r = await dbxBaja(arch[0].ruta);
     let v;
     try { v = r ? C.sxValida(JSON.parse(r.texto)) : { error: 'no se ha podido bajar' }; } catch (e) { v = { error: 'no es JSON' }; }
     if (v.error) throw new Error('La lista «' + arch[0].ruta + '» no se puede usar: ' + v.error + '.');
     S.sx = { ruta: arch[0].ruta, lista: v.lista, visto: Date.now() };
-    S.simB = null;
+    S.simB = null; S.planB = null;
     return S.sx;
   }
   let sxMirando = false;
@@ -1244,6 +1297,18 @@
       finally { sxMirando = false; pinta(); }
     })();
   }
+  // Una canción cuya clave ha cambiado con esta versión (llevaba «´» o parecido): lo que la memoria guardaba con la
+  // clave antigua («No es», «Añadir», su pareja) se copia a la nueva. Se copia, no se mueve: otra versión aún puede leerla.
+  function migraClaves(unicas) {
+    let n = 0;
+    unicas.forEach(u => {
+      const v = u.rb.claveVieja, k = u.rb.clave;
+      if (!v) return;
+      ['decisiones', 'pares'].forEach(sec => { const M = S.mem[sec]; if (M && M[v] && !M[k]) { M[k] = M[v]; n++; } });
+    });
+    if (n) memToca();
+    return n;
+  }
   async function simulaB(prog, fresca) {
     if (!S.db || !S.sp) throw new Error('Conecta Dropbox y Spotify en Cuentas.');
     await aseguraMem();
@@ -1254,11 +1319,15 @@
     if (!S.lib || fresca || S.lib.vieja || Date.now() - S.lib.leida > 15 * 60000) await leeBiblioteca(prog);
     prog('Preparando…');
     await cacheCarga();
-    const idx = indices(), L = S.sx.lista, baj = C.sxDescargadas(L), pls = soundeoActual();
+    S.planB = null;
+    const idx = indices(), L = S.sx.lista, baj = C.sxDescargadas(L), pls = soundeoActual(), reg = S.mem.sx || {};
     const dest = k => ({ clave: k, spId: pls[k] ? pls[k].id : null, nombre: pls[k] ? pls[k].nombre : SOUNDEO.find(x => x[0] === k)[1] + ' (sin pareja)' });
-    // Cada favorito va a Sound All y, además, a Sound Down si está descargado o a Sound Try si no.
-    const unicas = L.fav.map(f => ({ rb: C.descRb(C.sxPista(f)), sx: { id: f[0], baj: baj.has(f[0]), sinPublicar: f[3] === 2 }, destinos: [dest('all'), dest(baj.has(f[0]) ? 'down' : 'try')] }));
-    const sim = { fecha: Date.now(), lista: S.sx.ruta, listaT: L.t, lib: S.lib.leida, unicas, hechas: 0, incompleta: true };
+    // Cada favorito va a Sound All y, además, a Sound Down si está descargado (o lo estuvo: nunca vuelve de Down a Try) o a Sound Try si no.
+    const unicas = L.fav.map(f => ({ rb: C.descRb(C.sxPista(f)), sx: { id: f[0], texto: f[1], baj: baj.has(f[0]), sinPublicar: f[3] === 2 },
+      destinos: [dest('all'), dest(C.sxDestino(baj.has(f[0]), reg[f[0]]))] }));
+    const sim = { fecha: Date.now(), lista: S.sx.ruta, listaT: L.t, lib: S.lib.leida, unicas, hechas: 0, incompleta: true,
+      pls: { all: pls.all ? pls.all.id : null, down: pls.down ? pls.down.id : null, try: pls.try ? pls.try.id : null } };
+    migraClaves(sim.unicas);
     S.simB = sim;
     try {
       for (const u of sim.unicas) {
@@ -1270,15 +1339,70 @@
       sim.incompleta = false;
     } finally {
       sim.unicas.forEach(u => { if (!u.estado) reevalua(u, idx); });
+      replanB(sim);
       guardaPares(sim);
       await cacheGuarda();
     }
     if (!cuenta(sim).add && cuenta(sim).duda) S.simBFiltro = 'duda';
     return sim;
   }
+  // ¿Vale la lista de Soundeo para quitar? Solo si está completa y es de hace menos de 24 horas.
+  const sxValeQuitar = () => !!S.sx && sxAvisos(S.sx.lista).length === 0;
+  /* El registro de B tal como vale hoy. Cada apunte lleva el id de la playlist en la que se hizo («q»): si «Sound Try»
+     se borra y se crea otra, o el mapa pasa a otra playlist, lo apuntado en la antigua no dice nada de la nueva
+     (ni «la quitaste a mano» ni «la puso la app»). «d» (estuvo en Sound Down) sí se conserva. */
+  function sxReg() {
+    const pls = S.lib ? soundeoActual() : {}, M = (S.mem && S.mem.sx) || {}, out = {};
+    Object.keys(M).forEach(id => {
+      const r = M[id];
+      if (!r || typeof r !== 'object') return;
+      const p = {};
+      SOUNDEO.forEach(([k]) => { if (r.p && typeof r.p[k] === 'string' && pls[k] && r.q && r.q[k] === pls[k].id) p[k] = r.p[k]; });
+      out[id] = Object.assign({}, r, { p });
+    });
+    return out;
+  }
+  const sxApuntados = () => Object.values(sxReg()).filter(r => Object.keys(r.p).length > 0).length;
+  // La canción de Spotify de un favorito para una playlist: la que ya está allí o, si no, la elegida.
+  const uriEn = (u, d) => (d.ya ? d.ya.sp.uri : (u.elegida && (u.estado === 'add' || u.estado === 'ya' || u.estado === 'mano') ? u.elegida.sp.uri : null));
+  /* Con la simulación hecha (o tras una respuesta del usuario), qué habría que hacer en las tres playlists:
+     C.sxPlan, que es puro, con el registro de la app. Marca además en cada favorito lo que él quitó a mano. */
+  function replanB(sim) {
+    if (!sim || !S.lib || !S.mem) return;
+    const pls = soundeoActual(), reg = sxReg(), cont = {};
+    SOUNDEO.forEach(([k]) => { const p = pls[k]; cont[k] = p && p.id === sim.pls[k] && p.contenido && !destinoSx(p.id) ? urisDe(p.items) : null; });
+    sim.unicas.forEach(u => { u.destinos.forEach(d => { d.mano = false; d.asi = false; }); if (u.estado === 'mano') u.estado = 'add'; });
+    const favs = sim.unicas.map(u => {
+      const uris = {}, dec = S.mem.decisiones[u.rb.clave];
+      u.destinos.forEach(d => { const x = uriEn(u, d); if (x) uris[d.clave] = x; });
+      return { id: u.sx.id, dest: u.destinos[1].clave, uris, rech: (dec && dec.no) || [] };
+    });
+    sim.quitarVale = sxValeQuitar() && S.sx.ruta === sim.lista;
+    const P = sim.planB = C.sxPlan({ favs, reg, cont, quitar: sim.quitarVale });
+    const porId = new Map(sim.unicas.map(u => [String(u.sx.id), u]));
+    SOUNDEO.forEach(([k]) => P[k].mano.forEach(m => m.sx.forEach(id => {
+      const u = porId.get(String(id)), d = u && u.destinos.find(x => x.clave === k);
+      if (d && !d.ya) { d.mano = true; d.asi = !!m.asi; d.manoUri = m.uri; }
+    })));
+    // Un favorito al que no le queda nada por añadir porque lo que falta lo quitó él: sale de «Se añadirían».
+    sim.unicas.forEach(u => { if (u.estado === 'add' && u.destinos.some(d => d.mano) && u.destinos.every(d => d.ya || d.mano || !d.spId)) u.estado = 'mano'; });
+  }
+  // «Dejarla así»: no vuelve a esa playlist y no se pregunta más. Se apunta en el registro de ese favorito.
+  async function dejaAsi(u, d, si) {
+    if (!S.db || !S.mem) throw new Error('Conecta Dropbox en Cuentas.');
+    await memCarga(); // el apunte se cambia sobre lo último que haya en la memoria común, no sobre lo que esta pestaña tenía cargado
+    const id = String(u.sx.id), r = S.mem.sx[id] || { p: {} };
+    const asi = (Array.isArray(r.asi) ? r.asi : []).filter(k => k !== d.clave);
+    if (si) asi.push(d.clave);
+    S.mem.sx[id] = Object.assign({}, r, { asi, t: Date.now() });
+    sxGuardaLocal();
+    memToca();
+    S.planB = null;
+    replanB(S.simB);
+  }
   function porPlaylistB(sim) {
     const out = {};
-    SOUNDEO.forEach(([k]) => { out[k] = { ya: 0, add: 0, duda: 0, no: 0, pend: 0, total: 0 }; });
+    SOUNDEO.forEach(([k]) => { out[k] = { ya: 0, add: 0, duda: 0, no: 0, pend: 0, mano: 0, total: 0 }; });
     sim.unicas.forEach(u => u.destinos.forEach(d => { if (u.estado && out[d.clave]) { out[d.clave][estadoEn(u, d)]++; out[d.clave].total++; } }));
     return out;
   }
@@ -1401,10 +1525,18 @@
     });
   }
   // Por qué no se puede preparar ni ejecutar la sincronización ahora mismo (sin red). '' = se puede.
-  function porQueNoSinc() {
+  function porQueNoSinc(esB) {
     if (!S.db || !S.sp) return 'Conecta Dropbox y Spotify en Cuentas.';
     if (!tieneEscritura()) return 'En este dispositivo Spotify está conectado solo con permisos de lectura: vuelve a conectarlo en Cuentas.';
     if (corteActivo()) return 'Spotify tiene cortadas las peticiones de la app: hay que esperar a que pase el plazo.';
+    if (esB) {
+      if (!S.lib || !S.simB || !S.mem) return 'Primero simula: la sincronización parte de una simulación.';
+      if (S.simB.incompleta) return 'La simulación está incompleta: simula otra vez.';
+      if (S.lib.vieja || S.simB.lib !== S.lib.leida) return 'Spotify se ha vuelto a leer, o ha cambiado, después de la simulación: simula otra vez.';
+      if (Date.now() - S.simB.fecha > VALE_SIM) return 'La simulación tiene más de una hora: simula otra vez.';
+      if (!S.sx || S.sx.ruta !== S.simB.lista) return 'La lista de Soundeo ha cambiado después de la simulación: simula otra vez.';
+      return '';
+    }
     if (!S.xml || !S.lib || !S.sim) return 'Primero simula: la sincronización parte de una simulación.';
     if (S.sim.incompleta) return 'La simulación está incompleta: simula otra vez.';
     if (S.lib.vieja || S.sim.lib !== S.lib.leida) return 'Spotify se ha vuelto a leer, o ha cambiado, después de la simulación: simula otra vez.';
@@ -1418,6 +1550,60 @@
     S.planVer = null;
     pinta();
   }
+  /* Lo mismo para el botón B: una fila por cada una de las tres playlists de Soundeo, con lo que se añadiría
+     («uris», «lineas») y lo que se propone quitar («quita», «lineasQ», cada una con su motivo), sacado de sim.planB. */
+  const MOTIVO_Q = { descargada: 'ya la has descargado: pasa a Sound Down', 'sin-estrella': 'ya no es favorita en Soundeo', 'no-es': 'dijiste que no es la canción de tu favorito' };
+  function planDeB(sim) {
+    const pls = soundeoActual(), P = sim.planB, reg = S.mem.sx || {};
+    const porId = new Map(sim.unicas.map(u => [String(u.sx.id), u]));
+    return SOUNDEO.map(([k, nombreSx]) => {
+      const p = pls[k];
+      const f = { clave: k, nombreSx, id: p ? p.id : null, nombre: p ? p.nombre : '', publica: p ? p.publica : null, tiene: 0, antes: [], uris: [], lineas: [], quita: [], lineasQ: [], bloqueo: '', nada: false };
+      if (!p) { f.bloqueo = 'no tiene pareja en Spotify: crea allí una playlist vacía que se llame «' + nombreSx + '» y simula otra vez.'; return f; }
+      if (p.id !== sim.pls[k]) { f.bloqueo = 'el mapa ha cambiado desde la simulación: simula otra vez.'; return f; }
+      const no = destinoSx(p.id);
+      if (no) { f.bloqueo = no + '.'; return f; }
+      if (!p.contenido || !P || !P[k] || !P[k].usable) { f.bloqueo = 'no se ha podido leer su contenido' + (p.motivo ? ' (' + p.motivo + ')' : '') + '.'; return f; }
+      f.antes = urisDe(p.items); f.tiene = f.antes.length;
+      const dentro = new Set(f.antes);
+      P[k].anadir.forEach(a => {
+        if (!URI_CANCION.test(a.uri) || dentro.has(a.uri) || f.uris.indexOf(a.uri) >= 0) return;
+        const u = porId.get(String(a.sx[0])), sp = u && u.elegida ? u.elegida.sp : null;
+        f.uris.push(a.uri);
+        f.lineas.push({ uri: a.uri, rb: u ? lineaRb(u.rb) : '', sp: sp && sp.uri === a.uri ? lineaSp(sp.m) : a.uri, riesgo: u ? riesgoDe(u) : 0,
+          nota: u && u.elegida && u.elegida.r.nota ? String(u.elegida.r.nota).replace(/en rekordbox/g, 'en Soundeo') : '' });
+      });
+      P[k].quitar.forEach(q => {
+        if (!URI_CANCION.test(q.uri) || !dentro.has(q.uri) || f.quita.indexOf(q.uri) >= 0) return;
+        const it = p.items.find(x => (x.uri || (x.t && x.t.u)) === q.uri);
+        const fav = q.sx.map(id => { const u = porId.get(String(id)); return u ? lineaRb(u.rb) : (reg[id] && reg[id].n) || ''; }).filter(Boolean)[0] || '';
+        // «puesta» = la añadió la propia app en una sincronización; si no, ya estaba ahí y la app la dio por pareja del favorito.
+        const puesta = q.sx.some(id => { const r = reg[id]; return !!(r && r.o && r.o[k] && r.q && r.q[k] === p.id); });
+        f.quita.push(q.uri);
+        f.lineasQ.push({ uri: q.uri, sp: it && it.t ? lineaSp(it.t) : q.uri, fav, motivo: q.motivo, trasDown: !!q.trasDown, enDown: q.enDown || [], puesta });
+      });
+      if (!f.uris.length && !f.quita.length) { f.nada = true; f.bloqueo = 'no hay nada que añadir ni que quitar.'; }
+      else if (enfriando(f.id)) f.bloqueo = enfriando(f.id) + '.';
+      return f;
+    });
+  }
+  // Lo marcado en la pantalla de B: en cada playlist, añadir (todo o nada) y, canción a canción, lo que se quita.
+  const claveQ = (f, uri) => f.clave + '|' + uri;
+  function marcadasB(plan) {
+    return plan.filas.filter(f => !f.bloqueo).map(f => {
+      const anade = plan.marcadas[f.clave] === true && f.uris.length > 0;
+      const lq = f.lineasQ.filter(l => plan.quitar[claveQ(f, l.uri)] === true);
+      return Object.assign({}, f, { uris: anade ? f.uris : [], lineas: anade ? f.lineas : [], quita: lq.map(l => l.uri), lineasQ: lq, todasUris: f.uris, todasQuita: f.quita });
+    }).filter(f => f.uris.length || f.quita.length);
+  }
+  function preparaSincB() {
+    const no = porQueNoSinc(true);
+    if (no) { aviso(no, 'error'); return; }
+    replanB(S.simB);
+    S.planB = { t: Date.now(), sim: S.simB.fecha, filas: planDeB(S.simB), marcadas: {}, quitar: {} }; // nada marcado de entrada
+    S.planBVer = null;
+    pinta();
+  }
   // Cuánto gasta: por cada playlist, releerla antes, un envío por lote y releerla tras cada lote (50 canciones por lectura).
   const pagsDe = n => Math.max(1, Math.ceil(n / 50));
   function gastoDe(filas) {
@@ -1425,11 +1611,32 @@
     filas.forEach(f => {
       lect += pagsDe(f.tiene);
       for (let k = 0; k < f.uris.length; k += MAX_LOTE) { escr++; lect += pagsDe(f.tiene + Math.min(f.uris.length, k + MAX_LOTE)); }
+      const q = (f.quita || []).length;
+      for (let k = 0; k < q; k += MAX_LOTE) { escr++; lect += pagsDe(f.tiene + f.uris.length); }
+      // de Sound Try, por descarga, solo sale lo que esté en Sound Down: si Down no va marcada, se lee aparte
+      if (f.clave === 'try' && (f.lineasQ || []).some(l => l.motivo === 'descargada') && !filas.some(x => x.clave === 'down')) lect += 1;
     });
     return { escr, lect };
   }
   // La copia que se guarda antes de escribir: las playlists que se van a tocar, tal como estaban, y lo que se va a añadir.
-  function construyeAntes(marcadas) {
+  function construyeAntes(marcadas, simB) {
+    if (simB) {
+      return {
+        app: 'SynchroSound', version: VERSION,
+        tipo: 'Copia antes de sincronizar Soundeo: las playlists en las que se va a escribir, tal como estaban, y lo que se va a añadir y a quitar en cada una',
+        fecha: new Date().toISOString(), usuario: { id: S.lib.yo.id, nombre: S.lib.yo.nombre },
+        lista_soundeo: simB.lista, lista_leida: new Date(simB.listaT).toISOString(), simulacion: new Date(simB.fecha).toISOString(), spotify_leido: new Date(S.lib.leida).toISOString(),
+        nota: 'Justo antes de escribir en cada playlist se relee de Spotify; si no coincide con lo guardado aquí, no se escribe en ella. Para deshacer una quita, la canción está en «canciones» con su uri.',
+        playlists: marcadas.map(f => {
+          const p = S.lib.playlists.find(x => x.id === f.id);
+          return { id: p.id, uri: 'spotify:playlist:' + p.id, nombre: p.nombre, publica: p.publica, snapshot_id: p.snapshot, soundeo: f.nombreSx,
+            canciones: p.items.map(pistaCopia), se_van_a_anadir: f.lineas.map(l => ({ uri: l.uri, cancion: l.sp, favorito: l.rb })),
+            se_van_a_quitar: f.lineasQ.map(l => ({ uri: l.uri, cancion: l.sp, favorito: l.fav, motivo: MOTIVO_Q[l.motivo] || l.motivo, la_anadio_la_app: !!l.puesta })) };
+        }),
+        // el registro de la app tal como estaba: qué canción tenía apuntada de cada favorito en cada playlist
+        registro_de_la_app: JSON.parse(JSON.stringify((S.mem && S.mem.sx) || {})),
+      };
+    }
     return {
       app: 'SynchroSound', version: VERSION,
       tipo: 'Copia antes de sincronizar: las playlists en las que se va a escribir, tal como estaban, y lo que se va a añadir a cada una',
@@ -1445,19 +1652,26 @@
   }
   // Lo que queda escrito de una sincronización: qué se envió a cada playlist y qué se comprobó al releer.
   function construyeRegistro(res, marcadas, reg) {
-    const linea = (f, u) => { const l = f.lineas.find(x => x.uri === u); return { uri: u, cancion: l ? l.sp : '', rekordbox: l ? l.rb : '' }; };
+    const linea = (f, u) => {
+      const l = f.lineas.find(x => x.uri === u), q = !l && res.b ? (f.lineasQ || []).find(x => x.uri === u) : null;
+      if (q) return { uri: u, cancion: q.sp, favorito: q.fav, se_pidio_quitar: true }; // un lote de quitar que no se pudo comprobar
+      return res.b ? { uri: u, cancion: l ? l.sp : '', favorito: l ? l.rb : '' } : { uri: u, cancion: l ? l.sp : '', rekordbox: l ? l.rb : '' };
+    };
+    const lineaQ = (f, u) => { const l = (f.lineasQ || []).find(x => x.uri === u); return { uri: u, cancion: l ? l.sp : '', favorito: l ? l.fav : '', motivo: l ? (MOTIVO_Q[l.motivo] || l.motivo) : '' }; };
     return {
-      app: 'SynchroSound', version: VERSION, tipo: 'Registro de una sincronización de rekordbox a Spotify (solo añadir)',
+      app: 'SynchroSound', version: VERSION, tipo: res.b ? 'Registro de una sincronización de Soundeo a Spotify (añadir y quitar en Sound All, Sound Down y Sound Try)' : 'Registro de una sincronización de rekordbox a Spotify (solo añadir)',
       fecha: new Date(res.t).toISOString(), usuario: { id: S.lib.yo.id, nombre: S.lib.yo.nombre },
       copia_previa: res.copia, xml_ultimo_cambio: res.xml, final: res.fin || (res.pls.every(q => q.estado === 'ok') ? 'completa' : 'terminada con playlists sin tocar'),
       playlists: marcadas.map((f, i) => {
         const r = res.pls[i];
-        return { id: f.id, uri: 'spotify:playlist:' + f.id, nombre: f.nombre, rekordbox: f.clave, estado: r.estado,
+        return { id: f.id, uri: 'spotify:playlist:' + f.id, nombre: f.nombre, rekordbox: res.b ? undefined : f.clave, soundeo: res.b ? f.nombreSx : undefined, estado: r.estado,
           canciones_antes: r.antes, canciones_despues: r.despues,
-          lotes: r.lotes.map(L => ({ canciones: L.n, enviado: L.enviada, respuesta: L.estado, error: L.error || undefined, no_se_sabe_si_llego: L.incierta || undefined, cuadra_al_releer: L.cuadra })),
+          lotes: r.lotes.map(L => ({ quitar: L.quita || undefined, canciones: L.n, enviado: L.enviada, respuesta: L.estado, error: L.error || undefined, no_se_sabe_si_llego: L.incierta || undefined, cuadra_al_releer: L.cuadra })),
           anadidas: reg[i].anadidas.map(u => linea(f, u)),
           enviadas_sin_comprobar: reg[i].sinComprobar.map(u => linea(f, u)),
-          enviadas_que_no_se_ven_al_releer: reg[i].noEstan.map(u => linea(f, u)) };
+          enviadas_que_no_se_ven_al_releer: reg[i].noEstan.map(u => linea(f, u)),
+          quitadas: res.b ? reg[i].quitadas.map(u => lineaQ(f, u)) : undefined,
+          pedidas_quitar_que_siguen_al_releer: res.b ? reg[i].siguen.map(u => lineaQ(f, u)) : undefined };
       }),
     };
   }
@@ -1469,37 +1683,64 @@
     S.lib.idx = null;
     if (S.libCache && S.libCache.pls && S.libCache.usuario === S.lib.yo.id) S.libCache.pls[id] = { snap: pl.snapshot, total: pl.total, items, contenido: true, motivo: '' };
   }
-  async function sincroniza(prog) {
+  /* «esB» = la sincronización del botón B (Soundeo): mismo recorrido y mismas garantías, sobre las tres playlists
+     de Soundeo, y además puede quitar (paso 5). Sin «esB» es la del botón A, que solo añade. */
+  async function sincroniza(prog, esB) {
     const NADA = ' No se ha enviado nada a Spotify.';
-    const plan = S.plan;
-    S.plan = null; // una confirmación vale para una sola ejecución
+    const plan = esB ? S.planB : S.plan;
+    if (esB) S.planB = null; else S.plan = null; // una confirmación vale para una sola ejecución
     if (!plan) throw new Error('Prepara la sincronización primero.' + NADA);
-    const no = porQueNoSinc();
+    const no = porQueNoSinc(esB);
     if (no) throw new Error(no + NADA);
-    if (plan.sim !== S.sim.fecha) throw new Error('La simulación ha cambiado desde que se preparó la sincronización: prepárala otra vez.' + NADA);
-    const marcadas = plan.filas.filter(f => plan.marcadas[f.clave] === true && !f.bloqueo);
-    if (!marcadas.length) throw new Error('No hay ninguna playlist marcada.' + NADA);
+    const SIM = esB ? S.simB : S.sim; // la simulación de la que parte
+    if (plan.sim !== SIM.fecha) throw new Error('La simulación ha cambiado desde que se preparó la sincronización: prepárala otra vez.' + NADA);
+    const marcadas = esB ? marcadasB(plan) : plan.filas.filter(f => plan.marcadas[f.clave] === true && !f.bloqueo);
+    if (!marcadas.length) throw new Error((esB ? 'No hay nada marcado.' : 'No hay ninguna playlist marcada.') + NADA);
     /* Lo decidido en otro dispositivo también cuenta (un «No es», un cambio de mapa, un corte de Spotify): se baja
        la memoria común y se vuelve a mirar. Si con eso cambia lo que se añadiría, la comparación de abajo lo para. */
     const decAntes = {};
-    S.sim.unicas.forEach(u => { decAntes[u.rb.clave] = JSON.stringify(S.mem.decisiones[u.rb.clave] || null); });
+    SIM.unicas.forEach(u => { decAntes[u.rb.clave] = JSON.stringify(S.mem.decisiones[u.rb.clave] || null); });
     try { await memCarga(); }
     catch (e) { throw new Error('No se ha podido leer en Dropbox la memoria común (' + txtErr(e) + ').' + NADA); }
-    const no2 = porQueNoSinc();
+    if (esB) {
+      // Si desde otro dispositivo se ha guardado una lista de Soundeo más nueva, la de la simulación ya no vale.
+      let ultima;
+      try { ultima = await sxCarga(); }
+      catch (e) { throw new Error('No se ha podido mirar en Dropbox cuál es la última lista de Soundeo (' + txtErr(e) + ').' + NADA); }
+      if (!ultima || ultima.ruta !== SIM.lista) throw new Error('En Dropbox hay una lista de Soundeo más nueva que la de la simulación: simula otra vez.' + NADA);
+    }
+    const no2 = porQueNoSinc(esB);
     if (no2) throw new Error(no2 + NADA);
-    const mapaHoy = mapaActual().mapa;
-    if (S.xml.datos.delMapa.some(pl => ((mapaHoy[pl.clave] || {}).id || null) !== ((S.sim.mapa[pl.clave] || {}).id || null))) {
-      S.sim = null;
-      throw new Error('El mapa de playlists ha cambiado desde la simulación (quizá en otro dispositivo): simula otra vez.' + NADA);
+    if (esB) {
+      // «Estuvo en Sound Down» puede haberse apuntado en otro dispositivo después de simular: el destino tiene que ser el mismo.
+      if (SIM.unicas.some(u => C.sxDestino(u.sx.baj, S.mem.sx[u.sx.id]) !== u.destinos[1].clave)) {
+        S.simB = null;
+        throw new Error('El registro de Soundeo ha cambiado desde la simulación (quizá en otro dispositivo): simula otra vez.' + NADA);
+      }
+      const hoyPl = soundeoActual();
+      if (SOUNDEO.some(([k]) => ((hoyPl[k] || {}).id || null) !== (SIM.pls[k] || null))) {
+        S.simB = null;
+        throw new Error('El mapa de las playlists de Soundeo ha cambiado desde la simulación (quizá en otro dispositivo): simula otra vez.' + NADA);
+      }
+    } else {
+      const mapaHoy = mapaActual().mapa;
+      if (S.xml.datos.delMapa.some(pl => ((mapaHoy[pl.clave] || {}).id || null) !== ((S.sim.mapa[pl.clave] || {}).id || null))) {
+        S.sim = null;
+        throw new Error('El mapa de playlists ha cambiado desde la simulación (quizá en otro dispositivo): simula otra vez.' + NADA);
+      }
     }
     const idx = indices();
-    S.sim.unicas.forEach(u => { if (JSON.stringify(S.mem.decisiones[u.rb.clave] || null) !== decAntes[u.rb.clave]) reevalua(u, idx); });
+    SIM.unicas.forEach(u => { if (JSON.stringify(S.mem.decisiones[u.rb.clave] || null) !== decAntes[u.rb.clave]) reevalua(u, idx); });
+    if (esB) replanB(SIM); // con las respuestas y el registro recién bajados de la memoria común
     // Lo confirmado tiene que ser, ahora mismo, exactamente lo que da la simulación: ni una canción más ni una menos.
-    const fresco = planDe(S.sim);
+    const fresco = esB ? planDeB(SIM) : planDe(SIM);
     for (const f of marcadas) {
       const g = fresco.find(x => x.clave === f.clave);
-      if (!g || g.bloqueo || g.id !== f.id || !mismas(g.uris, f.uris) || !mismas(g.antes, f.antes)) {
-        throw new Error('Lo que se añadiría a «' + f.nombre + '» ha cambiado desde que se preparó la sincronización: prepárala otra vez.' + NADA);
+      // En B también tienen que coincidir los motivos de cada quita (y lo que cada una espera de Sound Down).
+      const motivos = F => JSON.stringify(F.lineasQ.map(l => [l.uri, l.motivo, !!l.trasDown, l.enDown || []]));
+      const lq = esB && g ? g.lineasQ.filter(l => f.quita.indexOf(l.uri) >= 0) : [];
+      if (!g || g.bloqueo || g.id !== f.id || !mismas(g.uris, f.todasUris || f.uris) || !mismas(g.antes, f.antes) || (esB && (!mismas(g.quita, f.todasQuita) || motivos({ lineasQ: lq }) !== motivos(f)))) {
+        throw new Error('Lo que se ' + (esB ? 'haría en' : 'añadiría a') + ' «' + f.nombre + '» ha cambiado desde que se preparó la sincronización: prepárala otra vez.' + NADA);
       }
     }
     if (new Set(marcadas.map(f => f.id)).size !== marcadas.length) throw new Error('Dos de las playlists marcadas son la misma en Spotify.' + NADA);
@@ -1520,7 +1761,7 @@
     };
     try {
       prog('Guardando la copia en Dropbox…');
-      copia = await dbxSube('/copias/antes-de-sincronizar-' + sello() + '-' + yo + '.json', JSON.stringify(construyeAntes(marcadas), null, 1), 'add', true);
+      copia = await dbxSube('/copias/antes-de-sincronizar-' + sello() + '-' + yo + '.json', JSON.stringify(construyeAntes(marcadas, esB ? SIM : null), null, 1), 'add', true);
       if (!copia || !copia.name) throw new Error('Dropbox no ha confirmado la copia');
       rutaRegistro = '/registro/sincronizacion-' + copia.name.replace(/^antes-de-sincronizar-/, '');
       S.copias = null;
@@ -1557,10 +1798,19 @@
     } catch (e) { viva = 'No se ha podido mirar en Dropbox si hay otra sincronización en marcha (' + txtErr(e) + ')'; }
     if (viva) { await cierraSin('retirada: ' + viva); throw new Error(viva + '.' + NADA); }
 
-    const res = { t: Date.now(), v: VERSION, xml: S.xml.fecha, copia: copia.name, completa, registro: '', errorRegistro: '', fin: '',
+    const res = { t: Date.now(), v: VERSION, xml: esB ? '' : S.xml.fecha, copia: copia.name, completa, registro: '', errorRegistro: '', fin: '',
       pls: marcadas.map(f => ({ clave: f.clave, id: f.id, nombre: f.nombre, publica: f.publica, pedidas: f.uris.length, antes: null, despues: null, anadidas: 0, estado: 'pendiente', detalle: '', lotes: [] })) };
-    const reg = marcadas.map(() => ({ anadidas: [], sinComprobar: [], noEstan: [] }));
-    const total = marcadas.reduce((n, f) => n + f.uris.length, 0);
+    if (esB) { res.b = true; res.pls.forEach((r, i) => { r.quitar = marcadas[i].quita.length; r.quitadas = 0; r.sinDown = 0; }); }
+    const reg = marcadas.map(() => ({ anadidas: [], sinComprobar: [], noEstan: [], quitadas: [], siguen: [] }));
+    const total = marcadas.reduce((n, f) => n + f.uris.length + (esB ? f.quita.length : 0), 0);
+    // Cómo quedó cada playlist la última vez que se leyó de Spotify en esta sincronización (para Sound Down y para el registro de B).
+    const leidasAhora = new Map();
+    const leeDown = async () => {
+      const id = SIM.pls.down;
+      if (!id) return null;
+      if (!leidasAhora.has(id)) leidasAhora.set(id, urisDe(await leePlaylistDirecta(id, true)));
+      return new Set(leidasAhora.get(id));
+    };
     let hechas = 0, enviados = 0, libSucia = false;
     /* El avance se apunta en el navegador antes y después de cada escritura: si la página se cierra o se recarga
        a mitad, al volver se ve hasta dónde llegó («abierta»), en vez de no quedar rastro. */
@@ -1571,11 +1821,18 @@
     let vuelo = null; // el lote que está entre «enviado» y «comprobado»: si algo se rompe ahí, queda dicho
     // 2) El permiso: exactamente lo confirmado, y solo mientras dura esta ejecución.
     permiso = { desde: Date.now(), hasta: t0 + VALE_PERMISO, copia: copia.path_display || copia.name, pls: new Map(marcadas.map(f => [f.id, new Set(f.uris)])),
-      lotes: marcadas.reduce((n, f) => n + lotesDe(f.uris.length), 0) };
+      lotes: marcadas.reduce((n, f) => n + lotesDe(f.uris.length), 0), b: !!esB };
+    if (esB) { // lo confirmado para quitar, playlist por playlist: la puerta de quitar no deja salir nada más
+      permiso.quita = new Map(marcadas.filter(f => f.quita.length).map(f => [f.id, new Set(f.quita)]));
+      permiso.lotesQ = marcadas.reduce((n, f) => n + lotesDe(f.quita.length), 0);
+    }
     try {
       for (let i = 0; i < marcadas.length; i++) {
         const f = marcadas[i], r = res.pls[i], G = reg[i];
         if (S.parar) { res.fin = 'La paraste antes de empezar con «' + f.nombre + '».'; break; }
+        // De Sound Try, por descarga, solo sale lo que esté ahora mismo en Sound Down: se mira antes de empezar con ella.
+        let enDown = null;
+        if (esB && f.lineasQ.some(l => l.motivo === 'descargada')) { try { enDown = await leeDown(); } catch (e) { enDown = null; } }
         // 3) Justo antes de escribir se relee la playlist de Spotify (no la guardada).
         prog('Releyendo «' + f.nombre + '» justo antes de escribir…', hechas, total);
         let items;
@@ -1587,6 +1844,7 @@
           break;
         }
         let prev = urisDe(items), leida = Date.now(); // cuándo se leyó por última vez: la puerta exige que sea de ahora mismo
+        leidasAhora.set(f.id, prev);
         r.antes = prev.length; r.despues = prev.length;
         if (!mismas(prev, f.antes)) { // no es la que vio la simulación: no se toca
           r.estado = 'cambiada';
@@ -1650,10 +1908,73 @@
                 : r.estado === 'incierta' ? 'No se sabe si llegó una escritura en «' + f.nombre + '».' : 'Spotify ha rechazado una escritura en «' + f.nombre + '».';
           }
           apunta();
+          leidasAhora.set(f.id, ua); // lo que se ha visto al releer vale para el registro también si se para aquí
           if (res.fin) break;
           prev = ua;
         }
         if (res.fin) break;
+        // 5) Quitar (solo el botón B): lo confirmado que siga ahí, por su propia puerta, y comprobando que sale todo lo pedido y nada más.
+        if (esB && f.quita.length) {
+          const sinDown = new Set(f.lineasQ.filter(l => l.motivo === 'descargada' && !(enDown && l.enDown.length && l.enDown.every(x => enDown.has(x)))).map(l => l.uri));
+          const aQuitar = f.quita.filter(u => prev.indexOf(u) >= 0 && !sinDown.has(u));
+          r.sinDown = f.quita.filter(u => prev.indexOf(u) >= 0 && sinDown.has(u)).length;
+          for (let k = 0; k < aQuitar.length; k += MAX_LOTE) {
+            if (S.parar) { r.estado = 'parada'; res.fin = 'La paraste a mitad de «' + f.nombre + '».'; break; }
+            const lote = aQuitar.slice(k, k + MAX_LOTE);
+            const L = { n: lote.length, quita: true, enviada: false, estado: null, sello: false, error: '', incierta: false, corte: false, relecturas: 0, cuadra: null, estan: null, repes: 0, errorComp: '' };
+            r.lotes.push(L);
+            prog('Quitando ' + canciones(lote.length) + ' de «' + f.nombre + '»…', hechas, total);
+            const n0 = S.cont.spEscr;
+            let snap = '';
+            r.estado = 'enviando'; marcaReleer(f.id, true); apunta();
+            vuelo = { r, L, G, lote };
+            pase = { id: f.id, uris: lote, quita: true }; // un solo uso: la puerta de quitar lo gasta
+            try {
+              const w = await spotify('DELETE', '/playlists/' + f.id + '/items', { cuerpo: { items: lote.map(u => ({ uri: u })) }, leida });
+              L.estado = w.estado; snap = String((w.cuerpo && w.cuerpo.snapshot_id) || ''); L.sello = !!snap;
+            } catch (e) {
+              L.estado = e.status || null; L.error = txtErr(e); L.incierta = !!e.incierta; L.corte = !!e.corte;
+            } finally { pase = null; }
+            L.enviada = S.cont.spEscr > n0;
+            if (!L.enviada) { vuelo = null; marcaReleer(f.id, false); r.estado = 'noenviada'; r.detalle = L.error; res.fin = 'Una petición de quitar de «' + f.nombre + '» no ha salido.'; break; }
+            enviados++;
+            if (L.corte) { vuelo = null; r.estado = 'corte'; G.sinComprobar.push(...lote); res.fin = 'Spotify ha cortado las peticiones al quitar de «' + f.nombre + '».'; break; }
+            // Como al añadir: vaya bien, mal o no se sepa, la petición no se repite; se relee y se compara.
+            prog('Comprobando «' + f.nombre + '» en Spotify…', hechas, total);
+            const esperado = prev.filter(u => lote.indexOf(u) < 0), bien = L.estado >= 200 && L.estado < 300; // salen todas las copias de cada una, y nada más
+            let ua;
+            try {
+              items = await leePlaylistDirecta(f.id, true); L.relecturas = 1; ua = urisDe(items);
+              if ((bien || L.incierta || L.estado == null) && mismas(ua, prev)) { await espera(ESPERA_COMP); items = await leePlaylistDirecta(f.id, true); L.relecturas = 2; ua = urisDe(items); }
+              leida = Date.now();
+            } catch (e) {
+              vuelo = null;
+              L.errorComp = txtErr(e); r.estado = 'sincomprobar'; G.sinComprobar.push(...lote);
+              res.fin = 'No se ha podido comprobar «' + f.nombre + '» releyéndola.';
+              break;
+            }
+            L.cuadra = mismas(ua, esperado);
+            const siguen = lote.filter(u => ua.indexOf(u) >= 0);
+            L.estan = siguen.length;
+            G.quitadas.push(...lote.filter(u => ua.indexOf(u) < 0)); G.siguen.push(...siguen);
+            r.despues = ua.length; r.quitadas += lote.length - siguen.length; hechas += lote.length - siguen.length;
+            ponEnLib(f.id, items, bien && L.cuadra ? snap : ''); libSucia = true;
+            leidasAhora.set(f.id, ua);
+            vuelo = null;
+            if (L.cuadra) marcaReleer(f.id, false);
+            if (bien && L.cuadra) r.estado = 'amedias';
+            else {
+              r.estado = bien ? 'nocuadra' : L.cuadra ? 'llego' : (L.incierta || L.estado == null ? 'incierta' : 'rechazada');
+              res.fin = bien ? 'Lo releído de «' + f.nombre + '» no cuadra con lo que se pidió quitar.'
+                : r.estado === 'llego' ? 'La petición de quitar de «' + f.nombre + '» llegó, pero Spotify no la confirmó: por prudencia se para aquí.'
+                  : r.estado === 'incierta' ? 'No se sabe si llegó una petición de quitar de «' + f.nombre + '».' : 'Spotify ha rechazado quitar de «' + f.nombre + '».';
+            }
+            apunta();
+            if (res.fin) break;
+            prev = ua;
+          }
+          if (res.fin) break;
+        }
         r.estado = 'ok';
         apunta();
       }
@@ -1665,11 +1986,16 @@
       S.errores.push({ t: new Date().toISOString(), donde: 'Sincronizar', m: txtErr(e), s: (e && e.status) || '' });
     } finally {
       permiso = null; pase = null;
-      S.sim = null; S.c = null; S.plan = null;
+      S.sim = null; S.c = null; S.plan = null; S.simB = null; S.planB = null;
       if (S.lib) S.lib.vieja = true; // la próxima simulación vuelve a comprobar Spotify
       res.abierta = false;
       S.sinc = res;
       apunta(); // el resultado queda apuntado antes de lo que sigue, que habla con Dropbox y puede tardar o fallar
+      // El registro de B: qué canción hay de cada favorito en cada playlist tocada, y lo quitado deja de constar.
+      if (esB) {
+        try { if (apuntaSx(SIM, marcadas, reg, leidasAhora)) { clearTimeout(memReloj); await memGuarda(); } }
+        catch (e) { S.errores.push({ t: new Date().toISOString(), donde: 'Registro de Soundeo', m: txtErr(e), s: '' }); }
+      }
       try { if (libSucia) await libCacheGuarda(); } catch (e) { /* ya avisa libCacheGuarda */ }
       // El registro se guarda siempre, aunque no se haya enviado nada: es también el cierre del testigo.
       try {
@@ -1682,13 +2008,56 @@
     aviso('Sincronización ' + rs.texto, rs.clase === 'ok' ? 'info' : 'error');
   }
   // Una sola sincronización a la vez en este navegador: con dos pestañas, la segunda no empieza.
-  async function sincronizaSola(prog) {
+  async function sincronizaSola(prog, esB) {
     const cerrojos = typeof navigator !== 'undefined' && navigator.locks;
-    if (!cerrojos || typeof cerrojos.request !== 'function') return sincroniza(prog);
+    if (!cerrojos || typeof cerrojos.request !== 'function') return sincroniza(prog, esB);
     return cerrojos.request('synchrosound-sincronizar', { ifAvailable: true }, async tengo => {
-      if (!tengo) { S.plan = null; throw new Error('Hay otra sincronización en marcha en otra pestaña de este navegador. Desde esta no se ha enviado nada a Spotify.'); }
-      return sincroniza(prog);
+      if (!tengo) { S.plan = null; S.planB = null; throw new Error('Hay otra sincronización en marcha en otra pestaña de este navegador. Desde esta no se ha enviado nada a Spotify.'); }
+      return sincroniza(prog, esB);
     });
+  }
+  /* Tras sincronizar B, el registro (memoria común, sección «sx») apunta, de cada playlist tocada y tal como se
+     releyó al final: qué canción de Spotify hay de cada favorito (la añadida y comprobada, o la que ya estaba y
+     la app emparejó) y, de lo quitado y comprobado, que ya no consta. Devuelve si ha cambiado algo. */
+  function apuntaSx(sim, marcadas, reg, leidas) {
+    const ahora = Date.now(), M = S.mem.sx;
+    let cambio = false;
+    const toca = (id, fn) => {
+      const k = String(id), r = M[k] && typeof M[k] === 'object' ? JSON.parse(JSON.stringify(M[k])) : { p: {} };
+      if (!r.p || typeof r.p !== 'object') r.p = {};
+      if (fn(r) === false) return;
+      r.t = ahora; M[k] = r; cambio = true;
+    };
+    marcadas.forEach((f, i) => {
+      const fin = leidas.get(f.id), k = f.clave;
+      if (!fin || !reg[i]) return;
+      const dentro = new Set(fin);
+      reg[i].quitadas.forEach(uri => {
+        if (dentro.has(uri)) return;
+        Object.keys(M).forEach(id => {
+          const m = M[id];
+          if (m && m.p && m.p[k] === uri && m.q && m.q[k] === f.id) toca(id, r => { delete r.p[k]; if (r.q) delete r.q[k]; if (r.o) delete r.o[k]; });
+        });
+      });
+      const puestas = new Set(reg[i].anadidas);
+      sim.unicas.forEach(u => {
+        const d = u.destinos.find(x => x.clave === k), uri = d ? uriEn(u, d) : null;
+        if (!uri || !dentro.has(uri)) return;
+        toca(u.sx.id, r => {
+          const igual = r.p[k] === uri && !!r.q && r.q[k] === f.id;
+          if (igual && (k !== 'down' || r.d) && r.n === u.sx.texto) return false;
+          if (!r.q || typeof r.q !== 'object') r.q = {};
+          if (!r.o || typeof r.o !== 'object') r.o = {};
+          // «o» = la añadió la app en esta sincronización; si ya estaba ahí, la app solo la ha emparejado
+          if (!igual) { if (puestas.has(uri)) r.o[k] = 1; else delete r.o[k]; }
+          r.p[k] = uri; r.q[k] = f.id; r.n = u.sx.texto;
+          if (k === 'down') r.d = 1;
+          return true;
+        });
+      });
+    });
+    if (cambio) { sxGuardaLocal(); memToca(); }
+    return cambio;
   }
   // Qué ha pasado en una playlist, en una frase.
   function textoPl(r) {
@@ -1697,11 +2066,13 @@
     const estan = 'de las ' + u.n + ' enviadas se ven ' + u.estan + (u.repes ? ', ' + u.repes + ' de ellas repetidas' : '') + ' ' + cuenta;
     // Lo que no se ve puede estar: Spotify a veces tarda en enseñar un cambio. Que no se dé por perdido ni se añada a mano.
     const ojo = u.estan < u.n ? ' Spotify puede tardar en enseñar un cambio: espera un par de minutos y simula otra vez antes de añadir nada a mano.' : '';
+    if (u.quita && r.estado !== 'ok') return n + textoQuita(r, u, cuenta);
+    const yQuitadas = r.quitar == null ? '' : (r.quitar ? ' y quitadas ' + r.quitadas + ' de ' + r.quitar : '') + (r.sinDown ? ' (' + r.sinDown + ' no se han quitado porque todavía no están en Sound Down)' : '');
     switch (r.estado) {
-      case 'ok': return n + 'añadidas ' + r.anadidas + ' ' + cuenta + '. Comprobado releyendo la playlist.';
+      case 'ok': return n + 'añadidas ' + r.anadidas + yQuitadas + ' ' + cuenta + '. Comprobado releyendo la playlist.';
       case 'cambiada': return n + 'no se ha tocado. Al releerla justo antes de escribir no era la misma que vio la simulación (ahora tiene ' + canciones(r.antes) + '). Simula otra vez.';
       case 'sinleer': return n + 'no se ha tocado: no se ha podido leer (' + r.detalle + ').';
-      case 'parada': return n + 'parada a medias. Añadidas ' + r.anadidas + ' de ' + r.pedidas + ' ' + cuenta + '; lo añadido está comprobado.';
+      case 'parada': return n + 'parada a medias. Añadidas ' + r.anadidas + ' de ' + r.pedidas + (r.quitar ? '; quitadas ' + (r.quitadas || 0) + ' de ' + r.quitar : '') + ' ' + cuenta + (r.quitar ? '; lo hecho está comprobado.' : '; lo añadido está comprobado.');
       case 'noenviada': return n + 'un lote no ha salido (' + r.detalle + '). Añadidas ' + r.anadidas + ' de ' + r.pedidas + '.';
       case 'corte': return n + 'Spotify cortó las peticiones al enviar ' + canciones(u.n) + '. No se puede comprobar ahora y la escritura no se repite: míralo en Spotify. Comprobadas antes del corte: ' + r.anadidas + ' de ' + r.pedidas + '.';
       case 'sincomprobar': return n + 'enviadas ' + canciones(u.n) + ' (respuesta: ' + (u.estado == null ? 'ninguna' : u.estado) + ') y no se ha podido comprobar releyendo: ' + String(u.errorComp).replace(/\.+$/, '') + '. La escritura no se repite: míralo en Spotify.';
@@ -1714,8 +2085,28 @@
       default: return n + 'no se ha tocado: la sincronización se paró antes de llegar a ella.';
     }
   }
+  // Lo mismo cuando lo que falló fue una petición de quitar (botón B).
+  function textoQuita(r, u, cuenta) {
+    const hecho = (r.anadidas ? 'Añadidas ' + r.anadidas + '. ' : '') + 'Quitadas y comprobadas: ' + (r.quitadas || 0) + ' de ' + r.quitar + ' ' + cuenta + '.';
+    const siguen = 'de las ' + u.n + ' que se pidió quitar siguen ' + u.estan;
+    const sinP = t => String(t).replace(/\.+$/, '');
+    switch (r.estado) {
+      case 'parada': return 'parada a medias. ' + hecho;
+      case 'noenviada': return 'una petición de quitar no ha salido (' + r.detalle + '). ' + hecho;
+      case 'corte': return 'Spotify cortó las peticiones al quitar ' + canciones(u.n) + '. No se puede comprobar ahora y la petición no se repite: míralo en Spotify. ' + hecho;
+      case 'sincomprobar': return 'se pidió quitar ' + canciones(u.n) + ' (respuesta: ' + (u.estado == null ? 'ninguna' : u.estado) + ') y no se ha podido comprobar releyendo: ' + sinP(u.errorComp) + '. La petición no se repite: míralo en Spotify.';
+      case 'rechazada': return 'Spotify ha rechazado quitar: ' + sinP(u.error) + '. Al releer, ' + siguen + ' ' + cuenta + '. La petición no se ha repetido.';
+      case 'llego': return 'Spotify no confirmó la petición de quitar: ' + sinP(u.error) + '. Al releer ya no están las ' + u.n + ' ' + cuenta + '; la petición no se ha repetido.';
+      case 'amedias': return 'se quedó a medias. ' + hecho;
+      case 'incierta': return 'se pidió quitar una vez, y no se sabe si llegó: ' + sinP(u.error) + '. Al releer, ' + siguen + ' ' + cuenta + '. La petición no se ha repetido. Spotify puede tardar en enseñar un cambio: espera un par de minutos y simula otra vez.';
+      case 'nocuadra': return 'Spotify respondió ' + u.estado + ' al quitar, pero al releer no cuadra: ' + siguen + ' ' + cuenta + '. La petición no se ha repetido. Míralo en Spotify.';
+      case 'enviando': return 'quedó a mitad de quitar ' + canciones(u.n) + ' (si la página se cerró o se recargó ahí, no se sabe si se quitaron). La petición no se repite: simula otra vez y se verá lo que hay.';
+      default: return 'no se ha tocado: la sincronización se paró antes de llegar a ella.';
+    }
+  }
   // El resultado entero, en una frase. clase: 'ok' | 'mal'.
   function resumenSinc(r) {
+    if (r.b) return resumenSincB(r);
     const bien = r.pls.filter(p => p.estado === 'ok').length, tot = r.pls.reduce((n, p) => n + p.anadidas, 0);
     if (r.abierta && S.tarea && S.tarea.nombre === TAREA_SINC) return { clase: 'mal', texto: 'en marcha ahora mismo, en esta pestaña. Añadidas y comprobadas hasta este momento: ' + canciones(tot) + '.' };
     if (r.abierta) return { clase: 'mal', texto: 'sin terminar: o sigue en marcha en otra pestaña, o la página se cerró o se recargó antes de acabar. Añadidas y comprobadas hasta ese momento: ' + canciones(tot) + '. Si se cerró a medias no queda registro en Dropbox (la copia previa sí): simula otra vez para ver cómo está Spotify.' };
@@ -1724,11 +2115,22 @@
     return { clase: 'mal', texto: 'parada. ' + r.fin + ' Añadidas y comprobadas hasta ese momento: ' + canciones(tot) + '. Ninguna escritura se ha repetido.' };
   }
 
+  function resumenSincB(r) {
+    const bien = r.pls.filter(p => p.estado === 'ok').length, tot = r.pls.reduce((n, p) => n + p.anadidas, 0), quit = r.pls.reduce((n, p) => n + (p.quitadas || 0), 0);
+    const sinD = r.pls.reduce((n, p) => n + (p.sinDown || 0), 0);
+    const hecho = 'añadidas ' + tot + ' y quitadas ' + quit + (sinD ? ' (' + sinD + ' sin quitar de Sound Try: todavía no ' + (sinD === 1 ? 'está' : 'están') + ' en Sound Down)' : '');
+    if (r.abierta && S.tarea && S.tarea.nombre === TAREA_SINC) return { clase: 'mal', texto: 'de Soundeo en marcha ahora mismo, en esta pestaña. Hasta este momento, comprobadas: ' + hecho + '.' };
+    if (r.abierta) return { clase: 'mal', texto: 'de Soundeo sin terminar: o sigue en marcha en otra pestaña, o la página se cerró o se recargó antes de acabar. Hasta ese momento, comprobadas: ' + hecho + '. Si se cerró a medias no queda registro en Dropbox (la copia previa sí): simula otra vez para ver cómo está Spotify.' };
+    if (!r.fin && bien === r.pls.length) return { clase: 'ok', texto: 'de Soundeo completa: ' + hecho + ' en ' + nPlaylists(bien) + ', comprobado releyendo cada playlist.' };
+    if (!r.fin) return { clase: 'mal', texto: 'de Soundeo terminada con ' + nPlaylists(r.pls.length - bien) + ' sin tocar. Comprobadas: ' + hecho + '.' };
+    return { clase: 'mal', texto: 'de Soundeo parada. ' + r.fin + ' Hasta ese momento, comprobadas: ' + hecho + '. Ninguna petición se ha repetido.' };
+  }
+
   // ---------------- diagnóstico (sin tokens ni datos de acceso) ----------------
   function diagnostico() {
     const L = [];
     const p = s => L.push(s);
-    p('SynchroSound ' + VERSION + ' — fase 2, etapa 1 (solo añade a «NS -» y «OG -», con confirmación) — buscador v' + C.MATCHER);
+    p('SynchroSound ' + VERSION + ' — añade a «NS -» y «OG -»; añade y quita en Sound All, Sound Down y Sound Try; todo con confirmación — buscador v' + C.MATCHER);
     p('Fecha: ' + new Date().toISOString());
     p('Navegador: ' + navigator.userAgent);
     p('Dropbox: ' + (S.db ? 'conectado; permisos: ' + (S.db.scope || '(no informados)') : 'sin conectar'));
@@ -1823,10 +2225,28 @@
         p('    SX ' + lineaRb(u.rb) + ' [' + C.mmss(u.rb.dur) + ']' + (u.decidida ? ' [con respuesta tuya]' : ''));
         u.dudosas.forEach(d => p('       ? ' + lineaSp(d.sp.m) + ' [' + C.mmss(d.sp.dur) + '] p=' + Math.round(d.r.p) + ' t=' + d.r.titulo + ' a=' + d.r.artista + ' v=' + d.r.version));
       });
-      p('  No están B (' + de('no').length + '):');
-      de('no').slice(0, 120).forEach(u => p('    SX ' + lineaRb(u.rb) + ' [' + C.mmss(u.rb.dur) + '] q=' + JSON.stringify(u.consultas || []) + ' cand=' + (u.cands ? u.cands.size : 0) + (u.ninguna ? ' [ninguna es]' : u.decidida ? ' [con respuesta tuya]' : '')));
+      p('  No están B (' + de('no').length + '); con ~ lo más parecido que devolvió Spotify:');
+      de('no').slice(0, 120).forEach(u => {
+        p('    SX ' + lineaRb(u.rb) + ' [' + C.mmss(u.rb.dur) + '] q=' + JSON.stringify(u.consultas || []) + ' cand=' + (u.cands ? u.cands.size : 0) + (u.ninguna ? ' [ninguna es]' : u.decidida ? ' [con respuesta tuya]' : ''));
+        C.cercanas(u.rb, u.cands ? Array.from(u.cands.values()) : [], 2).forEach(c =>
+          p('       ~ ' + lineaSp(c.sp.m) + ' [' + C.mmss(c.sp.dur) + '] t=' + c.e.titulo + ' a=' + c.e.artista + ' v=' + c.e.version));
+      });
+      const enSx = t => String(t).replace(/en rekordbox/g, 'en Soundeo');
       p('  Se añadirían B (' + de('add').length + '):');
-      porRiesgo(de('add')).forEach(u => p('    ' + (riesgoDe(u) ? 'r' + riesgoDe(u) + ' ' : '') + lineaRb(u.rb) + ' [' + C.mmss(u.rb.dur) + '] -> ' + lineaSp(u.elegida.sp.m) + ' [' + C.mmss(u.elegida.sp.dur) + '] a ' + u.destinos.filter(d => !d.ya).map(d => d.nombre).join(' y ') + (u.elegida.r.nota ? ' | ' + u.elegida.r.nota : '')));
+      porRiesgo(de('add')).forEach(u => p('    ' + (riesgoDe(u) ? 'r' + riesgoDe(u) + ' ' : '') + lineaRb(u.rb) + ' [' + C.mmss(u.rb.dur) + '] -> ' + lineaSp(u.elegida.sp.m) + ' [' + C.mmss(u.elegida.sp.dur) + '] a ' + u.destinos.filter(d => !d.ya && !d.mano).map(d => d.nombre).join(' y ') + (u.elegida.r.nota ? ' | ' + enSx(u.elegida.r.nota) : '')));
+      // Lo que la app tiene apuntado de B y lo que haría hoy con ello (sin títulos: solo cuentas y motivos).
+      const P = S.simB.planB, nReg = sxApuntados();
+      p('  Registro de B: ' + nReg + ' favoritos apuntados' + (S.sxRecuperados ? ' (' + S.sxRecuperados + ' apuntes recuperados de este navegador: faltaban en Dropbox)' : '') + '. Quitar: ' + (S.simB.quitarVale ? 'se puede proponer' : 'esta vez no (' + ((S.sx && sxAvisos(S.sx.lista).join('; ')) || 'la lista no vale') + ')'));
+      if (P) SOUNDEO.forEach(([k, nombre]) => {
+        const q = P[k].quitar, cuentaM = m => q.filter(x => x.motivo === m).length;
+        p('    ' + nombre + (P[k].usable ? '' : ' [NO SE PUEDE USAR]') + ': añadir ' + P[k].anadir.length + '; quitar ' + q.length + (q.length ? ' (descargadas ' + cuentaM('descargada') + ', sin estrella ' + cuentaM('sin-estrella') + ', «No es» ' + cuentaM('no-es') + ')' : '') +
+          '; quitadas a mano ' + P[k].mano.length + (P[k].mano.length ? ' (dejadas así ' + P[k].mano.filter(m => m.asi).length + ')' : ''));
+      });
+      const man = S.simB.unicas.filter(u => u.destinos.some(d => d.mano));
+      if (man.length) {
+        p('  Quitadas a mano B (' + man.length + '):');
+        man.slice(0, 60).forEach(u => p('    SX ' + lineaRb(u.rb) + ' fuera de ' + u.destinos.filter(d => d.mano).map(d => d.nombre + (d.asi ? ' [dejada así]' : '')).join(' y ')));
+      }
     } else p('Simulación B: sin hacer');
     if (S.c) p('Sin repartir: ' + S.c.filas.length + ' (ocultas ' + S.c.filas.filter(f => oculta(f.uri)).length + '); likes desde ' + S.c.desde + '; cuentan como repartidas: ' + S.c.rep.length + ' playlists');
     if (S.ultimaCopia) p('Última copia: ' + S.ultimaCopia.nombre + ' (' + kb(S.ultimaCopia.tam) + '): ' + JSON.stringify(S.ultimaCopia.resumen));
@@ -1868,11 +2288,11 @@
       h('div', { class: 'cab-fila' },
         h('div', { class: 'marca' }, 'SynchroSound', h('span', { class: 'ver', title: 'Versión' }, 'v' + VERSION)),
         h('button', { class: 'candado' + (esc ? ' abierto' : ''), type: 'button', 'aria-expanded': S.candado ? 'true' : 'false', onclick: () => { S.candado = !S.candado; pinta(); } },
-          h('span', { class: 'pestillo', 'aria-hidden': 'true' }, h('span', { class: 'pestillo-pieza' })), esc ? 'Solo añadir' : 'Solo lectura')),
+          h('span', { class: 'pestillo', 'aria-hidden': 'true' }, h('span', { class: 'pestillo-pieza' })), esc ? 'Escritura limitada' : 'Solo lectura')),
       S.candado && h('div', { class: 'candado-panel' + (esc ? ' abierto' : '') },
         esc
           ? [h('p', null, 'En este dispositivo Spotify ha concedido permiso para modificar playlists. Desde ese momento ya no es Spotify quien impide un cambio en tus playlists: es el código de esta página.'),
-            h('p', null, 'Esta versión solo deja salir una cosa: añadir canciones al final de tus playlists «NS - …» y «OG - …» del mapa, las que tú marcas y confirmas en la pestaña A, y después de guardar una copia en Dropbox. Cualquier otra cosa (otra playlist, quitar, reordenar, reemplazar, crear) se corta antes de salir.'),
+            h('p', null, 'Esta versión solo deja salir dos cosas, las dos después de guardar una copia en Dropbox y solo con lo que tú marcas y confirmas: (1) añadir canciones al final de tus playlists «NS - …» y «OG - …» del mapa (pestaña A) y de «Sound All», «Sound Down» y «Sound Try» (pestaña B); (2) quitar canciones de esas tres de Soundeo, y solo las que la app tiene apuntadas como pareja de un favorito tuyo (las que añadió ella y las que ya estaban y emparejó). De una «NS -», de una «OG -» o de cualquier otra playlist no puede quitar nada. Cualquier otra cosa (otra playlist, reordenar, reemplazar, crear) se corta antes de salir.'),
             h('p', null, 'Tus likes no se pueden tocar: ese permiso (user-library-modify) no se pide, así que ahí sigue mandando Spotify.')]
           : h('p', null, 'En este dispositivo la app no puede cambiar nada en tu Spotify. Lo garantiza Spotify, no solo el código: aquí solo tiene permisos de lectura, así que Spotify rechaza cualquier intento de añadir, quitar o crear.'),
         h('p', null, 'Permisos pedidos: ' + PERMISOS_SPOTIFY.join(', ') + '.'),
@@ -1994,14 +2414,14 @@
   }
 
   // ---- A ----
-  const CAT = { add: 'Se añadirían', duda: 'Dudosas', no: 'No están en Spotify', ya: 'Ya están', pend: 'Sin buscar' };
+  const CAT = { add: 'Se añadirían', duda: 'Dudosas', no: 'No están en Spotify', ya: 'Ya están', pend: 'Sin buscar', mano: 'Quitadas a mano' };
   function tira(c) {
     const total = c.ya + c.add + c.duda + c.no + (c.pend || 0);
     return h('div', { class: 'tira', role: 'img', 'aria-label': 'Ya están ' + c.ya + ', se añadirían ' + c.add + ', dudosas ' + c.duda + ', no están ' + c.no + (c.pend ? ', sin buscar ' + c.pend : '') },
       ['ya', 'add', 'duda', 'no', 'pend'].map(k => (c[k] ? h('span', { class: 'tramo ' + k, css: { 'flex-grow': String(c[k]) } }) : null)),
       !total && h('span', { class: 'tramo vacio', css: { 'flex-grow': '1' } }));
   }
-  const destinosDe = (u, soloFalta) => u.destinos.filter(d => !soloFalta || !d.ya).map(d => d.nombre || (S.sim && S.sim.mapa[d.clave] ? S.sim.mapa[d.clave].nombre : d.clave + ' (sin pareja)')).join(', ');
+  const destinosDe = (u, soloFalta) => u.destinos.filter(d => !soloFalta || (!d.ya && !d.mano)).map(d => d.nombre || (S.sim && S.sim.mapa[d.clave] ? S.sim.mapa[d.clave].nombre : d.clave + ' (sin pareja)')).join(', ');
   function filaSim(u) {
     const rb = u.rb;
     const cab = h('div', { class: 'fila-titulo' }, u.sx && h('span', { class: 'origen' }, u.sx.baj ? 'Descargada' : u.sx.sinPublicar ? 'Sin publicar' : 'Sin descargar'), lineaRb(rb), h('span', { class: 'dur' }, C.mmss(rb.dur)));
@@ -2174,7 +2594,8 @@
     return h('section', { class: 'bloque' },
       h('h2', null, 'Resultado'),
       h('p', { class: 'estado' + (sim.incompleta ? ' mal' : '') }, (sim.incompleta ? 'Simulación incompleta (' + sim.hechas + ' de ' + sim.unicas.length + '). ' : '') +
-        (esB ? favoritos(sim.unicas.length) + ' de Soundeo' : canciones(sim.unicas.length) + ' distintas en rekordbox') + '. Simulación del ' + fechaHora(sim.fecha) + ': no se ha cambiado nada en Spotify.'),
+        (esB ? favoritos(sim.unicas.length) + ' de Soundeo' : canciones(sim.unicas.length) + ' distintas en rekordbox') + '. Simulación del ' + fechaHora(sim.fecha) + ': no se ha cambiado nada en Spotify.' +
+        (c.mano ? ' ' + (c.mano === 1 ? 'Uno no sale en las listas de abajo: lo quitaste' : c.mano + ' no salen en las listas de abajo: los quitaste') + ' a mano de Spotify (ver «Quitadas a mano»).' : '')),
       c.pend > 0 && h('p', { class: 'estado mal', id: 'tope-aviso' }, canciones(c.pend) + ' sin buscar: hoy se ha llegado al tope de ' + topeBusq() + ' búsquedas nuevas. Lo buscado queda guardado; simula otro día y la app sigue con ellas.' + (esB ? '' : ' Lo demás se puede sincronizar ya.')),
       tira(c),
       h('div', { class: 'filtros', role: 'tablist', css: c.pend ? { 'grid-template-columns': 'repeat(5, 1fr)' } : null }, ['add', 'duda', 'no', 'ya'].concat(c.pend ? ['pend'] : []).map(k =>
@@ -2194,11 +2615,11 @@
       h('h2', null, 'Playlists de Soundeo'),
       h('ul', { class: 'lista mapa' }, SOUNDEO.map(([k, nombre]) => h('li', { class: 'fila' + (s[k] ? '' : ' cat-no') }, h('div', { class: 'fila-cuerpo' },
         h('div', { class: 'fila-titulo' }, nombre, s[k] && h('span', { class: 'dur' }, canciones(s[k].items.length))),
-        h('div', { class: 'mapa-sel' }, h('select', { 'aria-label': 'Playlist de Spotify para ' + nombre, disabled: !!S.tarea, onchange: e => { S.mem.soundeo[k] = { id: e.target.value || null, t: Date.now() }; memToca(); S.simB = null; if (S.lib && (S.vista === 'c' || S.c)) calculaC(); pinta(); } },
+        h('div', { class: 'mapa-sel' }, h('select', { 'aria-label': 'Playlist de Spotify para ' + nombre, disabled: !!S.tarea, onchange: e => { S.mem.soundeo[k] = { id: e.target.value || null, t: Date.now() }; memToca(); S.simB = null; S.planB = null; if (S.lib && (S.vista === 'c' || S.c)) calculaC(); pinta(); } },
           h('option', { value: '', selected: !s[k] }, 'Sin pareja'),
           propias.map(p => h('option', { value: p.id, selected: !!s[k] && s[k].id === p.id }, p.nombre))),
           !s[k] && filas && h('span', { class: 'fila-nota' }, 'No encuentro esta playlist en tu Spotify: créala vacía con ese nombre o elige otra.')),
-        filas && filas[k] && [tira(filas[k]), h('div', { class: 'fila-sub' }, 'Ya están ' + filas[k].ya + ', se añadirían ' + filas[k].add + ', dudosas ' + filas[k].duda + ', no están ' + filas[k].no + (filas[k].pend ? ', sin buscar ' + filas[k].pend : '') + '.')])))));
+        filas && filas[k] && [tira(filas[k]), h('div', { class: 'fila-sub' }, 'Ya están ' + filas[k].ya + ', se añadirían ' + filas[k].add + ', dudosas ' + filas[k].duda + ', no están ' + filas[k].no + (filas[k].pend ? ', sin buscar ' + filas[k].pend : '') + (filas[k].mano ? ', quitadas a mano ' + filas[k].mano : '') + '.')])))));
   }
 
   // ---- B ----
@@ -2207,22 +2628,136 @@
     const out = [], L = S.sx && S.sx.lista, av = L ? sxAvisos(L) : [];
     out.push(h('section', { class: 'bloque' },
       h('h2', null, 'Soundeo a Spotify: simular'),
-      h('p', { class: 'nota' }, 'Tus favoritos (★) de Soundeo que estén en Spotify van a «Sound All» y, además, a «Sound Down» si ya los descargaste o a «Sound Try» si no. En esta versión el botón B solo simula: no cambia nada en Spotify ni en Soundeo.'),
+      h('p', { class: 'nota' }, 'Tus favoritos (★) de Soundeo que estén en Spotify van a «Sound All» y, además, a «Sound Down» si ya los descargaste o a «Sound Try» si no. Simular no cambia nada en Spotify, y en Soundeo la app solo lee.'),
       !listo && h('p', { class: 'estado mal' }, 'Falta: ' + [!S.db && 'conectar Dropbox', !S.sp && 'conectar Spotify'].filter(Boolean).join(', ') + '. Se hace en Cuentas.'),
       S.sxLlegada && h('p', { class: 'estado mal', id: 'sx-llegada' }, 'Hay una lista recién leída (' + textoLista(S.sxLlegada.lista) + ') sin guardar en Dropbox.' + (S.db ? ' Guardándola…' : ' Conecta Dropbox en Cuentas para guardarla.')),
       L ? h('p', { class: 'estado', id: 'sx-lista' }, 'Favoritos de Soundeo leídos el ' + fechaHora(L.t) + ': ' + textoLista(L) + '.' + (S.lib ? ' Spotify leído el ' + fechaHora(S.lib.leida) + '.' : ''))
         : S.db && !S.sxLlegada && h('p', { class: 'estado', id: 'sx-lista' }, S.sxMirado ? 'Todavía no hay ninguna lista de Soundeo guardada.' : 'Mirando en Dropbox si hay una lista de Soundeo…'),
-      av.length > 0 && h('p', { class: 'estado mal', id: 'sx-avisos' }, 'Ojo con esta lista: ' + av.join('; ') + '. Para simular sirve; cuando el botón B pueda quitar canciones, con una lista así no quitará nada.'),
+      av.length > 0 && h('p', { class: 'estado mal', id: 'sx-avisos' }, 'Ojo con esta lista: ' + av.join('; ') + '. Para simular y para añadir sirve; con una lista así la app no propone quitar nada.'),
       h('p', { class: 'nota' }, 'La lista se lee en el iPhone. «Leer Soundeo» abre Soundeo en esta pestaña; allí el lector lee tus favoritos y tus descargas (solo lee) y te devuelve aquí con la lista, que se guarda en Dropbox para todos tus dispositivos. El lector se instala una vez, desde Cuentas.'),
       listo && h('p', { class: 'nota', id: 'busq-hoy-b' }, 'Búsquedas nuevas en Spotify hoy: ' + usoDe(hoy()).busq + ' de ' + topeBusq() + ' como mucho. El tope se cambia en Cuentas.'),
       bandaCorte(),
       h('div', { class: 'acciones' },
         boton(S.simB ? 'Simular otra vez' : 'Simular', () => tarea('Simular Soundeo', p => simulaB(p, false)), '', !listo || !(L || S.sxLlegada)),
+        S.lib && boton('Simular leyendo Spotify de nuevo', () => tarea('Simular Soundeo', p => simulaB(p, true)), 'sec', !listo || !(L || S.sxLlegada)),
         boton('Leer Soundeo', leerSoundeo, 'sec', !S.db),
         S.db && boton('Mirar en Dropbox', () => sxMira(true), 'sec'))));
+    out.push(bloqueSincB());
     if (S.lib && S.mem) out.push(bloqueMapaSoundeo(S.simB ? porPlaylistB(S.simB) : null));
+    if (S.simB) { const m = bloqueMano(S.simB); if (m) out.push(m); }
     if (S.simB) out.push(bloqueLista(S.simB, 'simBFiltro', true));
     return out;
+  }
+  // ---- B: sincronizar ----
+  function bloqueSincB() {
+    const no = porQueNoSinc(true), soloLee = !!S.sp && !!S.db && !tieneEscritura();
+    let cuerpo;
+    if (soloLee) {
+      cuerpo = h('div', { class: 'estado' }, 'En este dispositivo Spotify está conectado solo con permisos de lectura: aquí se puede simular, pero no sincronizar. Para sincronizar hay que volver a conectarlo en Cuentas.',
+        h('div', { class: 'acciones' }, botonReconecta()));
+    } else if (S.planB) cuerpo = pantallaConfirmaB(S.planB, no);
+    else {
+      cuerpo = [no && h('p', { class: 'estado' }, no),
+        h('div', { class: 'acciones' }, boton('Preparar la sincronización de Soundeo (no envía nada)', preparaSincB, '', !!no))];
+    }
+    return h('section', { class: 'bloque' },
+      h('h2', null, 'Sincronizar: añadir y quitar en Spotify'),
+      h('p', { class: 'nota' }, 'Añade a «Sound All», «Sound Down» y «Sound Try» los favoritos que la simulación da como «se añadirían» y, si lo marcas canción a canción, quita de ellas lo que ya no toca: de Sound Try lo que has descargado y de las tres lo que ya no es favorito. Solo quita canciones que la app tiene apuntadas como pareja de un favorito tuyo. No toca los likes ni ninguna otra playlist, y nada sale hacia Spotify hasta que marcas y confirmas.'),
+      ultimaSinc() && !(S.tarea && S.tarea.nombre === TAREA_SINC) && bloqueResultado(ultimaSinc()),
+      cuerpo);
+  }
+  /* La pantalla de confirmación de B. Añadir se marca por playlist; quitar, canción a canción, cada una con su
+     motivo. Nada viene marcado. Lo que se ve aquí es lo que sale: al confirmar se vuelve a comprobar que coincide
+     con la simulación, y las puertas de Spotify no dejan pasar nada que no esté marcado. */
+  function pantallaConfirmaB(plan, no) {
+    const sim = S.simB, marc = marcadasB(plan), libres = plan.filas.filter(f => !f.bloqueo && f.uris.length);
+    const nAdd = marc.reduce((n, f) => n + f.uris.length, 0), nQ = marc.reduce((n, f) => n + f.quita.length, 0), g = gastoDe(marc);
+    const pon = (o, k, v) => { if (v) o[k] = true; else delete o[k]; };
+    // Si de golpe «ya no son favoritas» muchas de las que la app tiene apuntadas, lo más probable es una lectura corta de Soundeo.
+    const sinE = new Set(), nReg = sxApuntados();
+    plan.filas.forEach(f => f.lineasQ.forEach(l => { if (l.motivo === 'sin-estrella') sinE.add(l.uri); }));
+    const muchas = sinE.size >= 5 && sinE.size * 4 > nReg;
+    return h('div', { class: 'estado confirma', id: 'sincb-conf' },
+      h('div', { class: 'fila-titulo' }, 'Marca lo que quieres que se haga en las playlists de Soundeo'),
+      h('div', { class: 'fila-sub' }, 'Favoritos de Soundeo leídos el ' + fechaHora(sim.listaT) + '. Simulación del ' + fechaHora(sim.fecha) + '. Spotify leído el ' + fechaHora(S.lib.leida) + '.'),
+      !sim.quitarVale && h('div', { class: 'fila-nota', id: 'sincb-sinquitar' }, 'Esta vez no se propone quitar nada: ' + ((S.sx && sxAvisos(S.sx.lista).join('; ')) || 'la lista de Soundeo no vale para eso') + '. Solo se añade.'),
+      muchas && h('div', { class: 'mal', id: 'sincb-muchas' }, 'Ojo: ' + sinE.size + ' canciones saldrían por «ya no es favorita en Soundeo», más de la cuarta parte de las ' + nReg + ' que la app tiene apuntadas. Si no has quitado tantas estrellas, puede que Soundeo no haya dado la lista entera: pulsa «Leer Soundeo» otra vez antes de marcar nada.'),
+      h('ul', { class: 'lista plan' }, plan.filas.map((f, i) => {
+        const idc = 'marcab-' + i, puesta = plan.marcadas[f.clave] === true && !f.bloqueo && f.uris.length > 0, avisos = f.lineas.filter(l => l.riesgo > 0).length;
+        const nq = f.lineasQ.filter(l => plan.quitar[claveQ(f, l.uri)] === true).length;
+        const lineas = f.lineas.map((l, k) => ({ l, k })).sort((a, b) => (b.l.riesgo - a.l.riesgo) || (a.k - b.k)).map(x => x.l);
+        return h('li', { class: 'fila' + (f.bloqueo ? (f.nada ? ' cat-ya' : ' cat-no') : (puesta || nq) ? ' cat-add' : '') },
+          h('input', { type: 'checkbox', id: idc, class: 'marca', checked: puesta, disabled: !!f.bloqueo || !f.uris.length || !!S.tarea, 'aria-label': 'Añadir a ' + (f.nombre || f.nombreSx),
+            onchange: e => { pon(plan.marcadas, f.clave, e.target.checked && !f.bloqueo); pinta(); } }),
+          h('div', { class: 'fila-cuerpo' },
+            h('label', { class: 'fila-titulo', for: idc }, f.nombreSx + ' → ' + (f.nombre || 'sin pareja')),
+            f.bloqueo
+              ? h('div', { class: f.nada ? 'fila-sub' : 'fila-nota' }, f.nada ? 'Nada que añadir ni que quitar: no se puede marcar.' : 'No se puede marcar: ' + f.bloqueo)
+              : [h('div', { class: 'fila-sub' }, 'En Spotify es ' + visib(f.publica) + ' y tiene ' + canciones(f.tiene) + '. Se añadirían ' + f.uris.length + (avisos ? ' (' + avisos + ' con aviso)' : '') + (f.lineasQ.length ? '. Se propone quitar ' + f.lineasQ.length : '') + '.'),
+                f.uris.length > 0 && h('div', { class: 'fila-acc' }, h('button', { class: 'btn mini sec', type: 'button', disabled: !!S.tarea, onclick: () => { S.planBVer = S.planBVer === f.clave ? null : f.clave; pinta(); } },
+                  S.planBVer === f.clave ? 'Ocultar' : (f.uris.length === 1 ? 'Ver la canción' : 'Ver las ' + f.uris.length))),
+                S.planBVer === f.clave && h('ul', { class: 'plan-canc' }, lineas.map(l =>
+                  h('li', null, l.riesgo > 0 && h('span', { class: 'origen' }, 'Con aviso'), l.rb + ' → ' + l.sp, l.nota && h('div', { class: 'fila-nota' }, l.nota)))),
+                f.lineasQ.length > 0 && h('ul', { class: 'plan-quita' }, f.lineasQ.map((l, k) => {
+                  const idq = 'quita-' + i + '-' + k, on = plan.quitar[claveQ(f, l.uri)] === true;
+                  return h('li', { class: on ? 'puesta' : '' },
+                    h('input', { type: 'checkbox', id: idq, class: 'marca', checked: on, disabled: !!S.tarea, 'aria-label': 'Quitar ' + l.sp + ' de ' + f.nombre,
+                      onchange: e => { pon(plan.quitar, claveQ(f, l.uri), e.target.checked); pinta(); } }),
+                    h('div', { class: 'fila-cuerpo' },
+                      h('label', { for: idq }, 'Quitar de ' + f.nombre + ': ' + l.sp),
+                      h('div', { class: 'fila-nota' }, 'Por qué: ' + (MOTIVO_Q[l.motivo] || l.motivo) + (l.fav ? ' (tu favorito: ' + l.fav + ')' : '') + '.' +
+                        (l.puesta ? '' : ' Esta no la añadió la app: ya estaba en la playlist y la app la dio por la pareja de ese favorito.') +
+                        (l.trasDown ? ' Todavía no está en Sound Down: solo saldrá de aquí si en esta misma sincronización se añade allí (marca también Sound Down).' : ''))));
+                }))]));
+      })),
+      h('div', { class: 'acciones' },
+        boton('Marcar añadir en todas', () => { libres.forEach(f => { plan.marcadas[f.clave] = true; }); pinta(); }, 'mini sec', !libres.length || libres.every(f => plan.marcadas[f.clave] === true)),
+        boton('Desmarcar todo', () => { plan.marcadas = {}; plan.quitar = {}; pinta(); }, 'mini sec', !marc.length)),
+      h('div', { class: 'fila-titulo', id: 'sincb-total' }, marc.length
+        ? 'Marcado: añadir ' + canciones(nAdd) + ' y quitar ' + nQ + ', en ' + nPlaylists(marc.length) + '. Gasta ' + g.escr + (g.escr === 1 ? ' escritura' : ' escrituras') + ' y unas ' + g.lect + ' lecturas de Spotify.'
+        : 'Nada marcado: no se envía nada.'),
+      h('ul', { class: 'plan-canc' },
+        h('li', null, 'Antes de escribir se guarda una copia en Dropbox con las playlists tal como están. Si no se guarda, no se escribe.'),
+        h('li', null, 'Cada playlist se relee de Spotify justo antes de tocarla. Si no es idéntica a la que vio la simulación, no se toca.'),
+        h('li', null, 'Primero se añade (al final, de tu favorito más antiguo al más nuevo) y después se quita. Tras cada paso se relee la playlist y se compara.'),
+        h('li', null, 'Solo se quita lo que marcas aquí, canción a canción, y solo canciones que la app tiene apuntadas como pareja de un favorito tuyo: las que añadió ella y las que ya estaban y emparejó (de estas lo dice). Si una está repetida en la playlist, salen todas sus copias.'),
+        h('li', null, 'Una petición no se repite nunca. Si algo falla, no cuadra o no se sabe si llegó, la sincronización se para y dice lo que hay.')),
+      no && h('div', { class: 'mal' }, no),
+      h('div', { class: 'acciones' },
+        boton(marc.length ? 'Confirmar: añadir ' + nAdd + ' y quitar ' + nQ : 'Confirmar', () => tarea(TAREA_SINC, p => sincronizaSola(p, true)), '', !marc.length || !!no),
+        boton('Cancelar', () => { S.planB = null; pinta(); }, 'sec')));
+  }
+  // Lo que él quitó a mano de una playlist de Soundeo: no se vuelve a añadir, y aquí decide qué hacer con cada una.
+  const AYUDA_MANO = {
+    noes: '«No es»: la app emparejó mal. Conservas la estrella en Soundeo; esa canción de Spotify queda descartada para este favorito, la app busca otra pareja y, si la descartada sigue en otra de las tres playlists, te propondrá quitarla.',
+    asi: '«Dejarla así»: la pareja era buena, pero no la quieres en esa playlist. Conservas la estrella, la canción no vuelve a esa playlist y no se te pregunta más.',
+    estrella: '«Quitar ★»: ya no te gusta. Quitará la estrella en Soundeo y la canción saldrá de las tres playlists. Llega en la próxima versión; mientras tanto, quita la estrella a mano en Soundeo y vuelve a leerlo.',
+  };
+  function bloqueMano(sim) {
+    const filas = [];
+    sim.unicas.forEach(u => u.destinos.forEach(d => { if (d.mano) filas.push({ u, d }); }));
+    if (!filas.length) return null;
+    const abiertas = filas.filter(x => !x.d.asi), calladas = filas.filter(x => x.d.asi);
+    const bt = (texto, ayuda, fn) => h('button', { class: 'btn mini sec', type: 'button', title: ayuda, disabled: !fn || !!S.tarea, onclick: fn || null }, texto);
+    return h('section', { class: 'bloque', id: 'sx-mano' },
+      h('h2', null, 'Quitadas a mano'),
+      h('p', { class: 'nota' }, 'Canciones que la app tenía apuntadas en una playlist de Soundeo y ya no están: las has quitado tú en Spotify. No se vuelven a añadir (si quitaste alguna sin querer, vuelve a ponerla tú en Spotify y la app la dará por buena). Dime qué hago con cada una; si no respondes, se quedan como están: fuera de esa playlist y con su estrella. ',
+        h('button', { class: 'btn mini sec', type: 'button', id: 'mano-ayuda', 'aria-expanded': S.manoAyuda ? 'true' : 'false', 'aria-label': 'Qué hace cada respuesta', onclick: () => { S.manoAyuda = !S.manoAyuda; pinta(); } }, '?')),
+      S.manoAyuda && h('ul', { class: 'plan-canc', id: 'mano-explica' }, h('li', null, AYUDA_MANO.noes), h('li', null, AYUDA_MANO.asi), h('li', null, AYUDA_MANO.estrella)),
+      abiertas.length > 0 && h('ul', { class: 'lista' }, abiertas.map(({ u, d }) => {
+        const sp = u.cands ? u.cands.get(d.manoUri) : null;
+        return h('li', { class: 'fila cat-pend' }, h('div', { class: 'fila-cuerpo' },
+          h('div', { class: 'fila-titulo' }, lineaRb(u.rb), h('span', { class: 'dur' }, C.mmss(u.rb.dur))),
+          h('div', { class: 'fila-sub' }, 'La quitaste de ' + d.nombre + (sp ? ': ' + lineaSp(sp.m) : '') + '.'),
+          h('div', { class: 'fila-acc' },
+            bt('No es', AYUDA_MANO.noes, sp ? () => descarta(u, sp) : null),
+            bt('Dejarla así', AYUDA_MANO.asi, () => tarea('Dejarla así', () => dejaAsi(u, d, true))),
+            bt('Quitar ★', AYUDA_MANO.estrella, null))));
+      })),
+      calladas.length > 0 && h('p', { class: 'estado', id: 'mano-asi' }, 'Dejadas así (no vuelven y no se pregunta más): ' + calladas.length + '.'),
+      calladas.length > 0 && S.manoAyuda && h('ul', { class: 'lista' }, calladas.map(({ u, d }) => h('li', { class: 'fila' }, h('div', { class: 'fila-cuerpo' },
+        h('div', { class: 'fila-titulo' }, lineaRb(u.rb)), h('div', { class: 'fila-sub' }, 'No vuelve a ' + d.nombre + '.'),
+        h('div', { class: 'fila-acc' }, boton('Volver a preguntar', () => tarea('Volver a preguntar', () => dejaAsi(u, d, false)), 'mini sec')))))));
   }
 
   // ---- C ----
@@ -2330,7 +2865,7 @@
     try { cuerpo = v(); }
     catch (e) { if (window.console) console.error(e); S.errores.push({ t: new Date().toISOString(), donde: 'Pintar ' + S.vista, m: String(e.message || e) }); cuerpo = h('p', { class: 'estado mal' }, 'Error al pintar esta pantalla: ' + (e.message || e)); }
     raiz.replaceChildren(...[cabecera(), zonaAvisos(), h('main', { class: 'vista' }, cuerpo), barraTarea(),
-      h('footer', { class: 'pie' }, 'SynchroSound v' + VERSION + '. En Spotify solo añade a tus playlists «NS -» y «OG -», y solo cuando lo confirmas. El botón B (Soundeo) solo simula.')].filter(Boolean));
+      h('footer', { class: 'pie' }, 'SynchroSound v' + VERSION + '. En Spotify añade a tus playlists «NS -» y «OG -», y añade y quita en «Sound All», «Sound Down» y «Sound Try»; siempre con una copia antes y solo cuando lo confirmas.')].filter(Boolean));
     window.scrollTo(0, y);
     // En el móvil las pestañas no caben a lo ancho: la que está abierta se deja a la vista.
     const act = raiz.querySelector('.pestana.activa'), nav = act && act.parentElement;

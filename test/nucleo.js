@@ -16,6 +16,20 @@ es(C.norm('Canción Élégante') === 'cancion elegante', 'acentos');
 es(C.norm('Søren') === 'soren', 'ø');
 es(C.norm('A.B.C.D.') === 'abcd', 'puntos');
 es(C.norm("I'm Here’s") === 'im heres', 'apóstrofos');
+es(C.norm('It´s Raining') === 'its raining' && C.norm('It`s Raining') === 'its raining' && C.norm('Itʼs Raining') === 'its raining' && C.norm('It′s') === 'its' && C.norm("It's Raining") === 'its raining',
+  'un acento suelto o una prima en lugar del apóstrofo («It´s») no parte la palabra: ' + JSON.stringify(C.norm('It´s Raining')));
+es(C.norm('Café´s') === 'cafes' && C.norm('aˊb') === 'ab' && C.norm('Olé') === 'ole', 'y los acentos de verdad siguen igual');
+{
+  const conTilde = C.descRb(C.sxPista([1, 'A.B.C.D., Lumen - It´s Raining (Marco Tulli Mix )', 300, 0])), conApos = C.descRb(C.sxPista([2, "A.B.C.D., Lumen - It's Raining (Marco Tulli Mix)", 300, 0]));
+  es(conTilde.clave === conApos.clave && conTilde.tit.base === 'its raining', 'un favorito escrito con «´» tiene la misma clave que con apóstrofo: ' + conTilde.clave);
+  const sp = C.descSp(C.minSp({ id: 'a'.repeat(22), uri: 'spotify:track:' + 'a'.repeat(22), name: "It's Raining - Marco Tulli Mix", artists: [{ name: 'A.B.C.D.' }, { name: 'Lumen' }, { name: 'Marco Tulli' }], duration_ms: 300000, album: { name: 'x' } }));
+  es(C.puntua(conTilde, sp).clase === 'seguro', 'y empareja con la canción de Spotify escrita con apóstrofo: ' + JSON.stringify(C.puntua(conTilde, sp).clase));
+  es(conTilde.claveVieja === 'abcd lumen|it s raining marco tulli mix' && conApos.claveVieja === undefined && C.descRb({ id: 1, artist: 'Ana', name: 'Don’t Stop', dur: 1 }).claveVieja === undefined,
+    'y recuerda la clave con que la guardaban las versiones anteriores, para no perder sus respuestas: ' + conTilde.claveVieja);
+  es(C.consultas(conTilde).every(q => q.indexOf('´') < 0) && /It's Raining/.test(C.consultas(conTilde)[0]), 'la búsqueda que sale hacia Spotify lleva apóstrofo normal: ' + JSON.stringify(C.consultas(conTilde)));
+  es(JSON.stringify(C.consultas(conApos)) === JSON.stringify(C.consultas(C.descRb(C.sxPista([2, "A.B.C.D., Lumen - It's Raining (Marco Tulli Mix)", 300, 0])))) && C.consultas(C.descRb(C.sxPista([3, 'Ana - Don’t Stop (Original Mix)', 300, 0])))[0].indexOf('’') >= 0,
+    'las búsquedas con apóstrofo normal o tipográfico no cambian (así lo ya buscado sigue valiendo)');
+}
 es(C.norm('K雨L  -  Ladrillo!') === 'k雨l ladrillo', 'caracteres no latinos y espacios');
 es(C.norm('Sal & Pimienta') === 'sal pimienta', '&');
 
@@ -346,6 +360,140 @@ es(C.FRESCA_ESCR === 15000 && C.MAX_LOTE === 100 && C.URI_CANCION.test(U(1)) && 
     'el cargador solo descarga el lector, de la web de SynchroSound y sin credenciales');
   es(!/XMLHttpRequest|localStorage|sessionStorage|document\.cookie|sxfeed|\bPOST\b/.test(cargador) && cargador.indexOf("if (!m) return;") < cargador.indexOf('fetch('), 'y sin la marca de SynchroSound termina antes de hacer nada; no guarda nada');
   es(/@match\s+https:\/\/soundeo\.com\/\*/.test(fs.readFileSync(path.join(__dirname, '..', 'userscript', 'synchrosound-lector.user.js'), 'utf8')), 'el cargador solo se instala para soundeo.com');
+}
+
+// --- Soundeo (botón B): en qué playlists se puede escribir, la puerta de quitar y el plan ---
+{
+  const ID = n => ('pl' + String(n)).padEnd(22, '0'), U = n => 'spotify:track:' + ('t' + n).padEnd(22, '0');
+  const all = { nombre: 'Sound All', propia: true };
+  es(C.destinoSxMal(all, 'all', 1) === '' && C.destinoSxMal({ nombre: ' sound  down ', propia: true }, 'down', 1) === '' && C.destinoSxMal({ nombre: 'Sound Try', propia: true }, 'try', 1) === '', 'las tres playlists de Soundeo, con su nombre y en su papel, valen');
+  es(/no se llama «Sound Try»/.test(C.destinoSxMal(all, 'try', 1)) && /no se llama «Sound All»/.test(C.destinoSxMal({ nombre: 'NS - House', propia: true }, 'all', 1)) && /no se llama/.test(C.destinoSxMal({ nombre: 'Sound All 2', propia: true }, 'all', 1)),
+    'una playlist con otro nombre no vale aunque el mapa apunte a ella (tampoco una «NS -»)');
+  {
+    const casi = ['SoundAll', 'Sound-All', 'Sound_All', 'Sound All 🔥', 'Sound All ★', 'Sóund Äll', 'Søund All', 'Ｓｏｕｎｄ Ａｌｌ', '«Sound All»', 'Sound All.', 'Sound Al', 'Sound Alll', 'My Sound All'];
+    const malos = casi.filter(n => !/no se llama «Sound All»/.test(C.destinoSxMal({ nombre: n, propia: true }, 'all', 1)));
+    es(malos.length === 0, 'un nombre parecido a «Sound All» no vale: tiene que ser ese (pasan y no deberían: ' + malos.join(' | ') + ')');
+    es(['Sound All', 'sound all', 'SOUND ALL', '  Sound   All '].every(n => C.destinoSxMal({ nombre: n, propia: true }, 'all', 1) === ''), 'solo se perdonan las mayúsculas y los espacios de más');
+  }
+  es(/no es tuya/.test(C.destinoSxMal({ nombre: 'Sound All', propia: false }, 'all', 1)) && /no está en lo leído/.test(C.destinoSxMal(null, 'all', 1)) && /más de una/.test(C.destinoSxMal(all, 'all', 2)) &&
+    /no es ninguna de las tres/.test(C.destinoSxMal(all, 'all', 0)) && /no es ninguna de las tres/.test(C.destinoSxMal(all, 'otra', 1)) && /no es ninguna de las tres/.test(C.destinoSxMal(all, '__proto__', 1)),
+    'ni la de otra persona, ni la que no se ha leído, ni la que hace de dos, ni un papel que no existe');
+  // la puerta de quitar
+  const ahora = 1795000000000;
+  const pide = cambio => {
+    const x = { metodo: 'DELETE', ruta: '/playlists/' + ID(1) + '/items', cuerpo: { items: [{ uri: U(1) }, { uri: U(2) }] }, pase: { id: ID(1), uris: [U(1), U(2)], quita: true },
+      permiso: { hasta: ahora + 60000, copia: '/copias/x.json', quita: new Map([[ID(1), new Set([U(1), U(2), U(3)])]]), lotesQ: 2, pls: new Map(), lotes: 0 },
+      ahora, leida: ahora - 1000, concedido: true, playlist: { nombre: 'Sound Try', propia: true }, papel: 'try', papeles: 1, enfria: '' };
+    if (cambio) cambio(x);
+    return x;
+  };
+  let x = pide(), g = C.puertaQuita(x);
+  es(!g.no && g.quita === true && g.ruta === '/playlists/' + ID(1) + '/items' && g.uris.join() === [U(1), U(2)].join() && x.permiso.lotesQ === 1 && x.permiso.quita.get(ID(1)).size === 1, 'quitar lo confirmado de una playlist de Soundeo sale, y gasta el permiso');
+  es(/ya se envió/.test(C.puertaQuita(Object.assign(pide(), { permiso: x.permiso })).no), 'la misma petición, repetida, ya no sale');
+  const no = (cambio, re, texto) => { const r = C.puertaQuita(pide(cambio)); es(!!r.no && re.test(r.no) && !r.ruta, texto + ' (' + r.no + ')'); };
+  no(x => { x.playlist = { nombre: 'NS - House', propia: true }; }, /no se llama/, 'de una «NS -» no se quita nada');
+  no(x => { x.playlist = { nombre: 'OG - All', propia: true }; x.papel = 'all'; }, /no se llama/, 'ni de una «OG -»');
+  no(x => { x.playlist = { nombre: 'Mis favoritas', propia: true }; }, /no se llama/, 'ni de cualquier otra playlist');
+  no(x => { x.playlist = { nombre: 'Sound Try', propia: false }; }, /no es tuya/, 'ni de una que no es suya');
+  no(x => { x.playlist = null; }, /no está en lo leído/, 'ni de una que no se ha leído');
+  no(x => { x.papeles = 2; }, /más de una/, 'ni si hace de dos playlists de Soundeo');
+  no(x => { x.papel = 'down'; }, /no se llama «Sound Down»/, 'ni si en el mapa hace de otra');
+  no(x => { x.metodo = 'PUT'; }, /no es una petición de quitar/, 'PUT no sale');
+  no(x => { x.metodo = 'POST'; }, /no es una petición de quitar/, 'un POST no pasa por la puerta de quitar');
+  no(x => { x.pase.quita = undefined; }, /falta la confirmación/, 'un pase de añadir no sirve para quitar');
+  no(x => { x.pase = null; }, /falta la confirmación/, 'sin pase no sale');
+  no(x => { x.concedido = false; }, /permiso de escritura/, 'sin el permiso de Spotify no sale');
+  no(x => { x.ruta = '/playlists/' + ID(2) + '/items'; }, /no es la llamada confirmada/, 'otra playlist que la del pase no sale');
+  no(x => { x.ruta += '?x=1'; }, /no es la llamada confirmada/, 'con parámetros en la dirección no sale');
+  no(x => { x.ruta = '/playlists/' + ID(1) + '/tracks'; }, /no es la llamada confirmada/, 'otra ruta no sale');
+  no(x => { x.ruta = '/me/tracks'; }, /no es la llamada confirmada/, 'los likes no se tocan');
+  no(x => { x.enfria = 'espera'; }, /espera/, 'si la playlist está en cuarentena no sale');
+  no(x => { x.permiso = null; }, /confirmada en curso/, 'sin sincronización confirmada no sale');
+  no(x => { x.permiso.hasta = ahora - 1; }, /confirmada en curso/, 'con el permiso caducado no sale');
+  no(x => { x.permiso.copia = ''; }, /copia/, 'sin copia no sale');
+  no(x => { x.leida = ahora - 60000; }, /releído/, 'sin relectura reciente no sale');
+  no(x => { x.leida = ahora + 5; }, /releído/, 'una relectura «del futuro» no vale');
+  no(x => { x.permiso.quita = new Map(); }, /nada confirmado para quitar/, 'una playlist sin nada confirmado para quitar no pierde nada');
+  no(x => { x.permiso.quita = undefined; }, /nada confirmado para quitar/, 'un permiso de solo añadir no deja quitar');
+  no(x => { x.permiso.lotesQ = 0; }, /lotes de quitar/, 'sin lotes de quitar pendientes no sale');
+  no(x => { x.pase.uris = [U(1), U(9)]; x.cuerpo = { items: [{ uri: U(1) }, { uri: U(9) }] }; }, /no está confirmado para quitar/, 'una canción no confirmada no se quita');
+  no(x => { x.pase.uris = [U(1), U(1)]; x.cuerpo = { items: [{ uri: U(1) }, { uri: U(1) }] }; }, /repite/, 'un lote que repite canciones no sale');
+  no(x => { x.pase.uris = []; x.cuerpo = { items: [] }; }, /entre 1 y 100/, 'un lote vacío no sale');
+  no(x => { const m = Array.from({ length: 101 }, (_, i) => U(100 + i)); x.permiso.quita.set(ID(1), new Set(m)); x.pase.uris = m; x.cuerpo = { items: m.map(u => ({ uri: u })) }; }, /entre 1 y 100/, 'más de 100 no salen');
+  no(x => { x.pase.uris = ['spotify:playlist:' + 'a'.repeat(22), U(2)]; }, /no está confirmado/, 'lo que no es una canción no sale');
+  no(x => { x.cuerpo = { items: [{ uri: U(1) }] }; }, /cuerpo/, 'el cuerpo tiene que ser el lote entero');
+  no(x => { x.cuerpo = { items: [{ uri: U(2) }, { uri: U(1) }] }; }, /cuerpo/, 'y en su orden');
+  no(x => { x.cuerpo = { items: [{ uri: U(1), positions: [0] }, { uri: U(2) }] }; }, /cuerpo/, 'sin posiciones');
+  no(x => { x.cuerpo = { items: [{ uri: U(1) }, { uri: U(2) }], snapshot_id: 'x' }; }, /cuerpo/, 'sin nada más en el cuerpo');
+  no(x => { x.cuerpo = { tracks: [{ uri: U(1) }, { uri: U(2) }] }; }, /cuerpo/, 'con el formato antiguo (tracks) no sale');
+  no(x => { x.cuerpo = { uris: [U(1), U(2)] }; }, /cuerpo/, 'con el cuerpo de añadir no sale');
+  // la puerta de añadir sigue sin dejar pasar un DELETE, con cualquier pase
+  es(C.puerta(pide()).no === 'solo se permite añadir (POST)' && C.puerta(pide(x => { x.pase.quita = undefined; })).no === 'solo se permite añadir (POST)', 'la puerta de añadir sigue rechazando cualquier DELETE');
+  {
+    const x = pide(y => { y.metodo = 'POST'; y.cuerpo = { uris: [U(1)] }; y.destino = () => ''; y.permiso.pls = new Map([[y.pase.id, new Set([U(1)])]]); y.permiso.lotes = 1; });
+    es(C.puerta(x).no === 'esa confirmación es para quitar, no para añadir', 'con una confirmación de quitar no se puede añadir: ' + C.puerta(x).no);
+  }
+  es(C.sxDestino(true, null) === 'down' && C.sxDestino(false, undefined) === 'try' && C.sxDestino(false, { d: 1 }) === 'down' && C.sxDestino(false, { p: {} }) === 'try', 'a Down si está descargada o lo estuvo; si no, a Try');
+
+  // el plan: qué añadir, qué quitar y qué quitó él a mano
+  const fav = (id, dest, u, rech) => ({ id, dest, uris: u == null ? {} : { all: U(u), [dest]: U(u) }, rech: (rech || []).map(U) });
+  const plan = (favs, reg, cont, quitar) => C.sxPlan({ favs, reg, cont, quitar: quitar === undefined ? true : quitar });
+  const us = l => l.map(a => a.uri.slice(14, 17).replace(/0+$/, '')).join(',');
+  let P = plan([fav(3, 'try', 3), fav(2, 'down', 2), fav(1, 'try', 1), fav(4, 'try', null)], {}, { all: [], down: [], try: [] });
+  es(us(P.all.anadir) === 't1,t2,t3' && us(P.down.anadir) === 't2' && us(P.try.anadir) === 't1,t3' && !P.all.quitar.length && !P.all.mano.length && P.all.ya === 0,
+    'primera carga: todo a Sound All y cada una a Down o Try, de la más antigua a la más nueva; la que no tiene pareja no entra: ' + us(P.all.anadir));
+  P = plan([fav(2, 'down', 2), fav(1, 'try', 1)], {}, { all: [U(1), U(2)], down: [U(2)], try: [U(1)] });
+  es(!P.all.anadir.length && !P.down.anadir.length && !P.try.anadir.length && P.all.ya === 2 && P.down.ya === 1 && P.try.ya === 1 && !P.all.quitar.length && !P.try.quitar.length, 'si ya está todo, nada que hacer');
+  const reg12 = { 1: { p: { all: U(1), try: U(1) } }, 2: { p: { all: U(2), down: U(2) }, d: 1 } };
+  // descarga el favorito 1: va a Down y, cuando esté allí, sale de Try
+  P = plan([fav(2, 'down', 2), fav(1, 'down', 1)], reg12, { all: [U(1), U(2)], down: [U(2)], try: [U(1)] });
+  es(us(P.down.anadir) === 't1' && P.try.quitar.length === 1 && P.try.quitar[0].motivo === 'descargada' && P.try.quitar[0].trasDown === true && P.try.quitar[0].uri === U(1) && !P.all.quitar.length,
+    'al descargar un favorito: se añade a Down y se propone quitar de Try, pendiente de que esté en Down');
+  P = plan([fav(2, 'down', 2), fav(1, 'down', 1)], reg12, { all: [U(1), U(2)], down: [U(2), U(1)], try: [U(1)] });
+  es(!P.down.anadir.length && P.try.quitar.length === 1 && P.try.quitar[0].trasDown === undefined, 'si ya está en Down, se propone quitar de Try sin más');
+  P = plan([fav(2, 'down', 2), fav(1, 'down', 1)], reg12, { all: [U(1), U(2)], down: null, try: [U(1)] });
+  es(!P.try.quitar.length && !P.down.usable, 'sin Sound Down a mano, de Try no sale nada por descarga');
+  P = plan([fav(2, 'down', 2), fav(1, 'down', 1)], { 2: reg12[2] }, { all: [U(1), U(2)], down: [U(2), U(1)], try: [U(1)] });
+  es(!P.try.quitar.length, 'lo que la app no puso en Try (no está en su registro) no se quita, aunque esté descargado');
+  // quita la estrella al favorito 2
+  P = plan([fav(1, 'try', 1)], reg12, { all: [U(1), U(2)], down: [U(2)], try: [U(1)] });
+  es(us(P.all.quitar) === 't2' && us(P.down.quitar) === 't2' && P.all.quitar[0].motivo === 'sin-estrella' && !P.try.quitar.length && !P.all.anadir.length, 'al quitar una estrella, sale de Sound All y de Sound Down (también de Down)');
+  P = plan([fav(1, 'try', 1)], reg12, { all: [U(1), U(2)], down: [U(2)], try: [U(1)] }, false);
+  es(!P.all.quitar.length && !P.down.quitar.length && !P.try.quitar.length, 'con la lista de Soundeo incompleta o vieja no se propone quitar nada');
+  {
+    const sin = v => { const Q = C.sxPlan(Object.assign({ favs: [fav(1, 'try', 1)], reg: reg12, cont: { all: [U(1), U(2)], down: [U(2)], try: [U(1)] } }, v)); return !Q.all.quitar.length && !Q.down.quitar.length && !Q.try.quitar.length; };
+    es(sin({}) && sin({ quitar: undefined }) && sin({ quitar: null }) && sin({ quitar: 1 }) && sin({ quitar: 'sí' }) && !sin({ quitar: true }), 'solo se propone quitar si quien llama dice expresamente que la lista vale (quitar: true)');
+  }
+  P = plan([fav(1, 'try', 1)], { 1: reg12[1] }, { all: [U(1), U(2), U(7)], down: [U(2)], try: [U(1)] });
+  es(!P.all.quitar.length && !P.down.quitar.length, 'lo que él metió a mano (no está en el registro) no se quita nunca');
+  // dos favoritos que son la misma canción de Spotify
+  P = plan([fav(5, 'try', 1), fav(1, 'try', 1)], {}, { all: [], down: [], try: [] });
+  es(us(P.all.anadir) === 't1' && us(P.try.anadir) === 't1' && P.all.anadir[0].sx.length === 2, 'dos favoritos con la misma canción de Spotify: se añade una vez');
+  P = plan([fav(5, 'try', 1)], { 1: reg12[1], 5: { p: { all: U(1), try: U(1) } } }, { all: [U(1)], down: [], try: [U(1)] });
+  es(!P.all.quitar.length && !P.try.quitar.length, 'y si a uno le quita la estrella, no sale mientras el otro la quiera');
+  // la quitó él a mano
+  P = plan([fav(2, 'down', 2), fav(1, 'try', 1)], reg12, { all: [U(1), U(2)], down: [U(2)], try: [] });
+  es(!P.try.anadir.length && P.try.mano.length === 1 && P.try.mano[0].uri === U(1) && P.try.mano[0].asi === false && P.try.mano[0].sx.join() === '1' && !P.all.quitar.length, 'lo que él quita a mano de Try no se vuelve a añadir y queda en su lista; en Sound All sigue');
+  P = plan([fav(2, 'down', 2), fav(1, 'try', 1)], { 1: { p: reg12[1].p, asi: ['try'] }, 2: reg12[2] }, { all: [U(1), U(2)], down: [U(2)], try: [] });
+  es(P.try.mano.length === 1 && P.try.mano[0].asi === true && !P.try.anadir.length, 'con «Dejarla así» sigue sin añadirse, y marcada para no preguntar más');
+  // la quitó a mano y ahora el buscador le da otra pareja a ese favorito (otra versión, por ejemplo): tampoco se añade
+  P = plan([fav(1, 'try', 8)], { 1: reg12[1] }, { all: [U(1)], down: [], try: [] });
+  es(!P.try.anadir.length && P.try.mano.length === 1 && P.try.mano[0].uri === U(8) && us(P.all.anadir) === 't8', 'si quitó a mano la canción de un favorito y ahora el buscador le da otra pareja, tampoco vuelve a esa playlist: ' + us(P.try.anadir));
+  P = plan([{ id: 1, dest: 'try', uris: { all: U(8), try: U(8) }, rech: [U(1)] }], { 1: reg12[1] }, { all: [U(1)], down: [], try: [] });
+  es(us(P.try.anadir) === 't8' && !P.try.mano.length, 'salvo que la haya rechazado con «No es»: entonces la pareja nueva sí se añade');
+  // «No es» pesa más que «descargada»: una pareja rechazada sale de Try aunque el favorito esté descargado y sin pareja nueva
+  P = plan([{ id: 1, dest: 'down', uris: {}, rech: [U(1)] }], { 1: reg12[1] }, { all: [U(1)], down: [], try: [U(1)] });
+  es(us(P.try.quitar) === 't1' && P.try.quitar[0].motivo === 'no-es' && P.try.quitar[0].trasDown === undefined && us(P.all.quitar) === 't1', 'una pareja rechazada con «No es» sale de Try sin esperar a Sound Down: ' + JSON.stringify(P.try.quitar));
+  // «No es» sobre una pareja que la app había puesto: la nueva se añade y la antigua se propone quitar
+  P = plan([{ id: 1, dest: 'try', uris: { all: U(8), try: U(8) }, rech: [U(1)] }], { 1: reg12[1] }, { all: [U(1)], down: [], try: [] });
+  es(us(P.all.anadir) === 't8' && us(P.try.anadir) === 't8' && us(P.all.quitar) === 't1' && P.all.quitar[0].motivo === 'no-es' && !P.try.mano.length, 'tras un «No es»: la pareja nueva se añade y la antigua, que la app había puesto, se propone quitar');
+  // un favorito que ahora no tiene pareja (búsqueda sin hacer, por ejemplo) no pierde lo que ya tenía
+  P = plan([fav(1, 'try', null), fav(2, 'down', null)], reg12, { all: [U(1), U(2)], down: [U(2)], try: [U(1)] });
+  es(!P.all.quitar.length && !P.down.quitar.length && !P.try.quitar.length, 'un favorito que ahora mismo no tiene pareja (sin buscar, dudosa) no pierde lo que la app ya le puso');
+  P = plan([fav(1, C.sxDestino(false, { p: { down: U(1) }, d: 1 }), 1)], { 1: { p: { down: U(1) }, d: 1 } }, { all: [U(1)], down: [U(1)], try: [] });
+  es(!P.down.quitar.length && !P.try.anadir.length && P.down.ya === 1, 'nunca vuelve de Down a Try: aunque Soundeo deje de darla por descargada, sigue en Down y no se añade a Try');
+  P = plan([fav(1, 'try', 1)], { 1: { p: { all: 'no es una uri' } }, 9: null, 8: { p: null } }, { all: [U(1)], down: [], try: [] });
+  es(P.all.ya === 1 && !P.all.quitar.length && us(P.try.anadir) === 't1', 'un registro estropeado no rompe nada ni hace quitar nada');
 }
 
 console.log('Núcleo: ' + ok + ' comprobaciones bien, ' + mal + ' mal.');

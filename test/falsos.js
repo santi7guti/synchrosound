@@ -35,6 +35,10 @@ class Mundo {
       //   y no responde nunca (como si la página se cerrase a mitad); {sinCuerpo: true} responde 201 sin cuerpo.
       //   Con «llega», {oculta: n} vale también cuando la respuesta falla.
       escritura: null,
+      // quita: lo mismo para las peticiones de quitar (DELETE /playlists/{id}/items con {items: [{uri}]}): null = se
+      //   aceptan (200) y salen todas las copias de cada canción. {estado, mensaje, red, llega}: como en «escritura»;
+      //   {parcial: n} solo quita las n primeras; {oculta: n} las n lecturas siguientes aún enseñan lo de antes.
+      quita: null,
       itemsFallaTrasEscribir: null, // un código (403…): tras la primera escritura, leer cualquier playlist falla con él
       listaAtrasada: false,      // la lista de playlists sigue dando el sello y el total de antes de escribir
       playlists: null,           // null = las comunes de datos.js; si no, una copia propia (D.copiaBiblio())
@@ -182,19 +186,36 @@ class Mundo {
       const tok = (req.headers().authorization || '').replace(/^Bearer /, '');
       if (metodo !== 'OPTIONS') this.eventos.push('sp ' + metodo + ' ' + u.pathname);
       if (metodo !== 'GET') {
-        // Escrituras. Se apunta todo lo que llega; solo se atiende «añadir canciones a una playlist propia», con el permiso que toca.
+        // Escrituras. Se apunta todo lo que llega; solo se atiende «añadir canciones a una playlist propia» y «quitarlas», con el permiso que toca.
         this.spotifyNoGet.push(metodo + ' ' + u.pathname);
         const cuerpo = req.postData() || '';
         this.escrituras.push({ metodo, ruta: u.pathname, q: u.search, cuerpo, tipo: req.headers()['content-type'] || '' });
         if (!this.tokens.sp.has(tok)) return json({ error: { status: 401, message: 'The access token expired' } }, 401);
         const prohibe = msg => json({ error: { status: 403, message: msg || 'Forbidden' } }, 403);
         const mw = u.pathname.match(/^\/v1\/playlists\/([^/]+)\/items$/);
-        if (metodo !== 'POST' || !mw) return prohibe();
+        if ((metodo !== 'POST' && metodo !== 'DELETE') || !mw) return prohibe();
         const pw = this.playlists.find(x => x.id === mw[1]);
         if (!pw) return json({ error: { status: 404, message: 'Not found' } }, 404);
         const permisos = (this.scopeDe.get(tok) || '').split(' ');
         if (permisos.indexOf(pw.public ? 'playlist-modify-public' : 'playlist-modify-private') < 0) return prohibe('Insufficient client scope');
         if (pw.owner.id !== D.YO.id) return prohibe();
+        if (metodo === 'DELETE') {
+          let its = null;
+          try { its = JSON.parse(cuerpo).items; } catch (e) { its = null; }
+          if (!Array.isArray(its) || !its.length || its.length > 100 || !its.every(x => x && typeof x.uri === 'string')) return json({ error: { status: 400, message: 'Bad request' } }, 400);
+          const quitaDe = lista => { const fuera = new Set(lista.map(x => x.uri)); pw.pistas = pw.pistas.filter(e => !fuera.has(e.t.uri)); pw.snapshot_id += 'd'; };
+          const q = this.opc.quita;
+          if (!q || (q.estado == null && !q.red)) {
+            const viejas = pw.pistas.slice();
+            quitaDe(q && q.parcial != null ? its.slice(0, q.parcial) : its);
+            if (q && q.oculta) pw.oculta = { n: q.oculta, pistas: viejas, sirve: false };
+            return json({ snapshot_id: pw.snapshot_id }, 200);
+          }
+          if (q.llega) quitaDe(its);
+          if (q.red) return ruta.abort('connectionreset');
+          if (q.estado === 429) { this.sp429++; return ruta.fulfill({ status: 429, headers: Object.assign({ 'content-type': 'application/json' }, CORS_SP), body: JSON.stringify({ error: { status: 429, message: 'Too many requests' } }) }); }
+          return json({ error: { status: q.estado, message: q.mensaje || 'Forbidden' } }, q.estado);
+        }
         let uris = null;
         try { uris = JSON.parse(cuerpo).uris; } catch (e) { uris = null; }
         if (!Array.isArray(uris) || !uris.length || uris.length > 100) return json({ error: { status: 400, message: 'Bad request' } }, 400);

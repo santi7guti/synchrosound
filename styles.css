@@ -203,3 +203,9 @@ label.fila-titulo { display: block; cursor: pointer; }
 .plan-canc { margin: 8px 0 0; padding-left: 20px; font-size: 15px; color: var(--tinta); }
 .plan-canc li { margin: 0 0 6px; overflow-wrap: anywhere; }
 #sinc-total { margin-top: 12px; }
+
+/* botón B: lo que se propone quitar, canción a canción, cada una con su casilla */
+.plan-quita { list-style: none; margin: 10px 0 0; padding: 0; border-top: 1px solid var(--linea); }
+.plan-quita li { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--linea); border-left: 4px solid var(--no); padding-left: 8px; }
+.plan-quita li.puesta { background: var(--panel); }
+.plan-quita label { font-weight: 600; overflow-wrap: anywhere; }

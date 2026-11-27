@@ -14,7 +14,11 @@
   // ---------- texto ----------
   const RARAS = { 'ø': 'o', 'đ': 'd', 'ł': 'l', 'ß': 'ss', 'æ': 'ae', 'œ': 'oe', 'ð': 'd', 'þ': 'th', 'ı': 'i' };
 
-  function norm(s) {
+  // Acentos sueltos y primas que se escriben en lugar del apóstrofo («I´ve»). Van antes de normalizar: al descomponer,
+  // «´» se queda en un espacio y partía la palabra en dos («i ve» en vez de «ive»).
+  const APOSTROFOS = /[\u00B4\u02B9\u02BB\u02BC\u02C8\u02CA\u2032\uFF07]/g;
+  // normVieja = como normalizaban las versiones hasta la 0.4.0. Solo sirve para reconocer en la memoria las claves de entonces.
+  function normVieja(s) {
     return String(s == null ? '' : s)
       .normalize('NFKD').replace(/[̀-ͯ]/g, '')
       .toLowerCase()
@@ -23,6 +27,7 @@
       .replace(/[^\p{L}\p{N}]+/gu, ' ')
       .trim();
   }
+  function norm(s) { return normVieja(String(s == null ? '' : s).replace(APOSTROFOS, "'")); }
   function toks(s) { return s ? String(s).split(' ').filter(Boolean) : []; }
   function ordena(s) { return toks(s).sort().join(' '); }
 
@@ -198,10 +203,10 @@
     if (!tit.ver.who && t.remixer && norm(t.remixer)) {
       tit.ver.who = norm(t.remixer); tit.ver.crudoWho = String(t.remixer).trim(); tit.ver.esRemix = true;
     }
-    return {
-      id: t.id, artista, nombre, dur: t.dur || 0, tit, art: tokensArtista(artista),
-      clave: norm(t.artist) + '|' + norm(t.name),
-    };
+    const clave = norm(t.artist) + '|' + norm(t.name), vieja = normVieja(t.artist) + '|' + normVieja(t.name);
+    const out = { id: t.id, artista, nombre, dur: t.dur || 0, tit, art: tokensArtista(artista), clave };
+    if (vieja !== clave) out.claveVieja = vieja; // con ella guardaron sus respuestas las versiones anteriores
+    return out;
   }
   function minSp(tr) {
     return {
@@ -450,7 +455,7 @@
 
   // ---------- búsquedas ----------
   function limpiaQ(s) {
-    return String(s || '').replace(/["“”«»()\[\]{}|*:;!?¿¡]/g, ' ').replace(/\s+/g, ' ').trim();
+    return String(s || '').replace(APOSTROFOS, "'").replace(/`/g, "'").replace(/["“”«»()\[\]{}|*:;!?¿¡]/g, ' ').replace(/\s+/g, ' ').trim();
   }
   // Hasta 3 textos de búsqueda, del más completo al más suelto.
   function consultas(rb) {
@@ -619,6 +624,7 @@
     const p = x.pase, per = x.permiso;
     if (x.metodo !== 'POST') return 'solo se permite añadir (POST)';
     if (!p || typeof p.id !== 'string') return 'falta la confirmación del usuario';
+    if (p.quita !== undefined) return 'esa confirmación es para quitar, no para añadir';
     if (x.concedido !== true) return 'Spotify no ha concedido el permiso de escritura';
     const m = /^\/playlists\/([A-Za-z0-9]{22})\/items$/.exec(String(x.ruta));
     if (!m || m[1] !== p.id) return 'no es la llamada confirmada';
@@ -717,10 +723,147 @@
     return { id: 'sx' + f[0], artist: i > 0 ? texto.slice(0, i) : '', name: i > 0 ? texto.slice(i + 3) : texto, dur: f[2] || 0, remixer: '' };
   }
 
+  // ---------- Soundeo (botón B): escribir en Sound All, Sound Down y Sound Try ----------
+  const SX_PAPELES = { all: 'Sound All', down: 'Sound Down', try: 'Sound Try' };
+  const SX_ORDEN = ['all', 'down', 'try'];
+  /* ¿Se puede escribir en esa playlist como una de las tres de Soundeo? pl = la playlist tal como se leyó de
+     Spotify ({nombre, propia}) o null; papel = cuál de las tres es en el mapa ('all', 'down' o 'try');
+     papeles = cuántos de esos papeles apuntan a ella. Devuelve por qué no, o '' si se puede. El nombre tiene que
+     ser el suyo: así, aunque el mapa se cambie a mano, la app no escribe en otra playlist. */
+  function destinoSxMal(pl, papel, papeles) {
+    if (!pl) return 'esa playlist no está en lo leído de tu Spotify';
+    if (pl.propia !== true) return 'la playlist «' + pl.nombre + '» no es tuya';
+    const nombre = typeof papel === 'string' && Object.prototype.hasOwnProperty.call(SX_PAPELES, papel) ? SX_PAPELES[papel] : null;
+    if (!nombre || papeles !== 1) return papeles > 1 ? '«' + pl.nombre + '» hace de más de una playlist de Soundeo en el mapa' : '«' + pl.nombre + '» no es ninguna de las tres playlists de Soundeo del mapa';
+    // El nombre, tal cual: solo se perdonan las mayúsculas y los espacios de más. «SoundAll», «Sound All 2» o «Sóund All» no valen.
+    if (typeof pl.nombre !== 'string' || pl.nombre.trim().replace(/\s+/g, ' ').toLowerCase() !== nombre.toLowerCase()) return '«' + pl.nombre + '» no se llama «' + nombre + '»';
+    return '';
+  }
+  /* LA PUERTA DE QUITAR. x = { metodo, ruta, cuerpo, pase, permiso, ahora, leida, concedido, playlist, papel, papeles, enfria }:
+       pase     = el lote que se quiere quitar: {id, uris, quita: true}. Vale para una llamada;
+       permiso  = lo confirmado por el usuario: {hasta, copia, quita: Map(id → Set(uris que aún se pueden quitar)), lotesQ};
+       playlist, papel, papeles = lo que pide destinoSxMal; enfria = '' o por qué hay que esperar antes de tocarla.
+     Solo sale DELETE /playlists/{id}/items a una playlist propia que se llame «Sound All», «Sound Down» o
+     «Sound Try» y sea la del mapa, con entre 1 y 100 canciones sin repetir, todas confirmadas para quitar de esa
+     playlist y ninguna enviada ya, sin posiciones ni nada más en el cuerpo, y con la copia guardada. De una
+     playlist «NS - …» u «OG - …», o de cualquier otra, no sale nunca nada. */
+  function porQueNoQuita(x) {
+    const p = x.pase, per = x.permiso;
+    if (x.metodo !== 'DELETE') return 'no es una petición de quitar (DELETE)';
+    if (!p || p.quita !== true || typeof p.id !== 'string') return 'falta la confirmación del usuario';
+    if (x.concedido !== true) return 'Spotify no ha concedido el permiso de escritura';
+    const m = /^\/playlists\/([A-Za-z0-9]{22})\/items$/.exec(String(x.ruta));
+    if (!m || m[1] !== p.id) return 'no es la llamada confirmada';
+    const mal = destinoSxMal(x.playlist || null, x.papel, x.papeles);
+    if (mal !== '') return mal;
+    if (x.enfria !== '') return String(x.enfria || 'no se ha podido comprobar la playlist');
+    if (!per || !(x.ahora < per.hasta)) return 'no hay ninguna sincronización confirmada en curso';
+    if (!per.copia) return 'no hay copia guardada antes de escribir';
+    if (!(x.leida <= x.ahora && x.ahora - x.leida < FRESCA_ESCR)) return 'la playlist no se ha releído de Spotify justo antes de quitar';
+    const quedan = per.quita instanceof Map ? per.quita.get(p.id) : null;
+    if (!(quedan instanceof Set)) return 'esa playlist no tiene nada confirmado para quitar';
+    if (!(per.lotesQ >= 1)) return 'ya han salido todos los lotes de quitar confirmados';
+    const us = p.uris;
+    if (!Array.isArray(us) || us.length < 1 || us.length > MAX_LOTE) return 'el lote no tiene entre 1 y ' + MAX_LOTE + ' canciones';
+    if (new Set(us).size !== us.length) return 'el lote repite canciones';
+    if (!us.every(u => typeof u === 'string' && URI_CANCION.test(u) && quedan.has(u))) return 'el lote lleva algo que no está confirmado para quitar de esa playlist o que ya se envió';
+    const c = x.cuerpo;
+    if (!c || typeof c !== 'object' || Object.keys(c).length !== 1 || !Array.isArray(c.items) || c.items.length !== us.length ||
+        !c.items.every((it, i) => it && typeof it === 'object' && Object.keys(it).length === 1 && it.uri === us[i])) return 'el cuerpo no es exactamente el lote confirmado';
+    return '';
+  }
+  /* Devuelve {no} o {ruta, uris, quita: true}. Al aprobar, gasta: esas canciones ya no pueden volver a pedirse
+     para esa playlist dentro de la misma sincronización, llegue o no la petición. */
+  function puertaQuita(x) {
+    const no = porQueNoQuita(x);
+    if (no) return { no };
+    const quedan = x.permiso.quita.get(x.pase.id), uris = x.pase.uris.slice();
+    uris.forEach(u => quedan.delete(u));
+    x.permiso.lotesQ--;
+    return { ruta: '/playlists/' + x.pase.id + '/items', uris, quita: true };
+  }
+  // ¿A cuál de las dos va, además de a Sound All? Descargada (o lo estuvo: nunca vuelve de Down a Try) → Down.
+  function sxDestino(descargada, apunte) { return descargada || (apunte && apunte.d) ? 'down' : 'try'; }
+  /* Qué habría que hacer en las tres playlists. Función pura: no sabe de red ni de pantalla, y todo lo calcula
+     por canción de Spotify, no por favorito (dos favoritos pueden ser la misma canción).
+     o = { favs, reg, cont, quitar }:
+       favs = los favoritos de ahora, en el orden de Soundeo (el más nuevo primero): {id, dest, uris, rech};
+              dest = 'down' o 'try' (sxDestino); uris = {all, [dest]}: la canción de Spotify de ese favorito para
+              cada playlist (la que ya está allí o la elegida), o nada si no tiene pareja; rech = las que el usuario
+              rechazó para ese favorito con «No es»;
+       reg  = el registro de la app: {[id de Soundeo]: {p: {all, down, try: uri que la app puso o emparejó ahí},
+              asi: [playlists en las que dijo «Dejarla así»], d: estuvo en Down}};
+       cont = {all, down, try}: las uris que tiene ahora cada playlist, o null si no se puede usar;
+       quitar = false si la lista de Soundeo no vale para quitar (incompleta o vieja).
+     Devuelve, por playlist: {usable, ya, anadir: [{uri, sx}], mano: [{uri, sx, asi}], quitar: [{uri, sx, motivo, trasDown, enDown}]}.
+       anadir = lo que quiere y no tiene, del favorito más antiguo al más nuevo (lo nuevo queda al final);
+       mano   = la app la puso ahí, un favorito la sigue queriendo y ya no está: la quitó él. No se vuelve a añadir;
+       quitar = la app la puso ahí, sigue ahí y ya ningún favorito la quiere ahí. motivo: 'descargada' (solo en
+                Try, y solo si está o va a estar en Down: trasDown), 'no-es' o 'sin-estrella'. */
+  function sxPlan(o) {
+    const reg = o.reg || {}, cont = o.cont || {}, out = {}, quiere = {};
+    const porId = new Map((o.favs || []).map(f => [String(f.id), f]));
+    SX_ORDEN.forEach(P => { quiere[P] = new Map(); });
+    for (const f of o.favs || []) {
+      for (const P of ['all', f.dest]) {
+        const u = f.uris && f.uris[P];
+        if (!quiere[P] || typeof u !== 'string' || !URI_CANCION.test(u)) continue;
+        if (!quiere[P].has(u)) quiere[P].set(u, []);
+        quiere[P].get(u).push(String(f.id));
+      }
+    }
+    const apunte = (id, P) => (reg[id] && reg[id].p && typeof reg[id].p[P] === 'string' ? reg[id].p[P] : null);
+    for (const P of SX_ORDEN) {
+      const r = out[P] = { usable: Array.isArray(cont[P]), ya: 0, anadir: [], mano: [], quitar: [] };
+      if (!r.usable) continue;
+      const dentro = new Set(cont[P]);
+      quiere[P].forEach((ids, u) => {
+        if (dentro.has(u)) { r.ya++; return; }
+        // Quitada a mano: para ese favorito la app tenía apuntada aquí esta canción, u otra que él no ha rechazado, y ya no está.
+        const suyos = ids.filter(id => {
+          const a = apunte(id, P), f = porId.get(id);
+          return !!a && !dentro.has(a) && (a === u || !(f && Array.isArray(f.rech) && f.rech.indexOf(a) >= 0));
+        });
+        if (suyos.length) { r.mano.push({ uri: u, sx: suyos, asi: suyos.every(id => Array.isArray(reg[id].asi) && reg[id].asi.indexOf(P) >= 0) }); return; }
+        r.anadir.push({ uri: u, sx: ids });
+      });
+      r.anadir.reverse();
+      if (o.quitar !== true) continue;
+      const puso = new Map();
+      Object.keys(reg).forEach(id => { const u = apunte(id, P); if (u) { if (!puso.has(u)) puso.set(u, []); puso.get(u).push(id); } });
+      puso.forEach((ids, u) => {
+        if (!dentro.has(u) || quiere[P].has(u)) return;
+        const motivos = [], enDown = [];
+        for (const id of ids) {
+          const f = porId.get(id);
+          if (!f) motivos.push('sin-estrella');
+          else if (Array.isArray(f.rech) && f.rech.indexOf(u) >= 0) motivos.push('no-es'); // no es su canción: sale de donde siga, descargado o no
+          else if (P === 'try' && f.dest === 'down') { motivos.push('descargada'); enDown.push((f.uris && f.uris.down) || ''); }
+          else return; // ese favorito la sigue queriendo ahí aunque ahora no tenga pareja: no se quita
+        }
+        r.quitar.push({ uri: u, sx: ids, motivo: motivos.indexOf('descargada') >= 0 ? 'descargada' : motivos.indexOf('no-es') >= 0 ? 'no-es' : 'sin-estrella', enDown });
+      });
+    }
+    // De Try solo sale por descarga lo que está, o va a estar con esta misma sincronización, en Down.
+    const D = out.down;
+    out.try.quitar = out.try.quitar.filter(q => {
+      const pide = q.enDown; // las canciones que tienen que estar en Sound Down antes de quitar esta de Try
+      if (q.motivo !== 'descargada') return true;
+      if (!D.usable || !pide.length || pide.some(u => !u)) return false;
+      const ya = pide.every(u => cont.down.indexOf(u) >= 0), ira = pide.every(u => cont.down.indexOf(u) >= 0 || D.anadir.some(a => a.uri === u));
+      if (!ya && !ira) return false;
+      if (!ya) q.trasDown = true;
+      return true;
+    });
+    SX_ORDEN.forEach(P => out[P].quitar.forEach(q => { if (q.motivo !== 'descargada') delete q.enDown; }));
+    return out;
+  }
+
   return {
     PREFIJO_DESTINO, URI_CANCION, MAX_LOTE, FRESCA_ESCR, destinoMal, puerta,
     MATCHER, norm, parecido, mmss, parseTitulo, descRb, descSp, minSp, claveCancion, puntua, elige, yaEsta, explica, cercanas, aspecto,
     consultas, consultaExtended, leeRekordbox, nombreDestino, propMapa, buscaPorNombre, sinRepartir,
     SX_VERSION, sxSuma, sxValida, sxMotivos, sxDescargadas, sxPista,
+    SX_PAPELES, SX_ORDEN, destinoSxMal, porQueNoQuita, puertaQuita, sxDestino, sxPlan,
   };
 });
