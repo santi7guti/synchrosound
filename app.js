@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.6.0';
+  const VERSION = '0.6.1';
   const C = window.SSCore;
 
   const CFG = {
@@ -2204,9 +2204,10 @@
       p('Sincronización: ' + fechaHora(sc.t) + ' (v' + sc.v + '): ' + resumenSinc(sc).texto);
       p('  copia previa: ' + sc.copia + (sc.completa ? '; copia completa: ' + sc.completa : '') + '; registro: ' + (sc.registro || (sc.errorRegistro ? 'NO GUARDADO (' + sc.errorRegistro + ')' : 'no se llegó a guardar')));
       sc.pls.forEach(r => {
-        p('  ' + r.nombre + ' (' + visib(r.publica) + '): ' + r.estado + '; pedidas ' + r.pedidas + '; antes ' + (r.antes == null ? '?' : r.antes) + '; después ' + (r.despues == null ? '?' : r.despues) + '; añadidas ' + r.anadidas + (r.detalle ? '; ' + r.detalle : ''));
-        r.lotes.forEach((L, i) => p('    lote ' + (i + 1) + ': ' + L.n + '; enviado: ' + (L.enviada ? 'sí, una vez' : r.estado === 'enviando' && i === r.lotes.length - 1 ? 'no se sabe (la página se cerró)' : 'no') + '; respuesta: ' + (L.estado == null ? 'ninguna' : L.estado) + '; sello nuevo: ' + (L.sello ? 'sí' : 'no') +
-          '; relecturas: ' + L.relecturas + '; cuadra: ' + (L.cuadra == null ? 'sin comprobar' : L.cuadra ? 'sí' : 'NO') + '; se ven: ' + (L.estan == null ? '?' : L.estan + ' de ' + L.n) + (L.repes ? ' (' + L.repes + ' repetidas)' : '') +
+        p('  ' + r.nombre + ' (' + visib(r.publica) + '): ' + r.estado + '; pedidas ' + r.pedidas + '; antes ' + (r.antes == null ? '?' : r.antes) + '; después ' + (r.despues == null ? '?' : r.despues) + '; añadidas ' + r.anadidas +
+          (r.quitar ? '; quitar ' + r.quitar + '; quitadas ' + (r.quitadas || 0) + (r.sinDown ? '; sin quitar por no estar aún en Sound Down ' + r.sinDown : '') : '') + (r.detalle ? '; ' + r.detalle : ''));
+        r.lotes.forEach((L, i) => p('    lote ' + (i + 1) + (L.quita ? ' (quitar)' : '') + ': ' + L.n + '; enviado: ' + (L.enviada ? 'sí, una vez' : r.estado === 'enviando' && i === r.lotes.length - 1 ? 'no se sabe (la página se cerró)' : 'no') + '; respuesta: ' + (L.estado == null ? 'ninguna' : L.estado) + '; sello nuevo: ' + (L.sello ? 'sí' : 'no') +
+          '; relecturas: ' + L.relecturas + '; cuadra: ' + (L.cuadra == null ? 'sin comprobar' : L.cuadra ? 'sí' : 'NO') + (L.quita ? '; siguen: ' : '; se ven: ') + (L.estan == null ? '?' : L.estan + ' de ' + L.n) + (L.repes ? ' (' + L.repes + ' repetidas)' : '') +
           (L.error ? '; error: ' + L.error : '') + (L.incierta ? ' [no se sabe si llegó]' : '') + (L.corte ? ' [corte de Spotify]' : '') + (L.errorComp ? '; error al comprobar: ' + L.errorComp : '')));
       });
     } else p('Sincronización: sin hacer');
@@ -2764,17 +2765,21 @@
       !sim.quitarVale && h('div', { class: 'fila-nota', id: 'sincb-sinquitar' }, 'Esta vez no se propone quitar nada: ' + ((S.sx && sxAvisos(S.sx.lista).join('; ')) || 'la lista de Soundeo no vale para eso') + '. Solo se añade.'),
       muchas && h('div', { class: 'mal', id: 'sincb-muchas' }, 'Ojo: ' + sinE.size + ' canciones saldrían por «ya no es favorita en Soundeo», más de la cuarta parte de las ' + nReg + ' que la app tiene apuntadas. Si no has quitado tantas estrellas, puede que Soundeo no haya dado la lista entera: pulsa «Leer Soundeo» otra vez antes de marcar nada.'),
       h('ul', { class: 'lista plan' }, plan.filas.map((f, i) => {
-        const idc = 'marcab-' + i, puesta = plan.marcadas[f.clave] === true && !f.bloqueo && f.uris.length > 0, avisos = f.lineas.filter(l => l.riesgo > 0).length;
+        const idc = 'marcab-' + i, conCasilla = !f.bloqueo && f.uris.length > 0, puesta = plan.marcadas[f.clave] === true && conCasilla, avisos = f.lineas.filter(l => l.riesgo > 0).length;
         const nq = f.lineasQ.filter(l => plan.quitar[claveQ(f, l.uri)] === true).length;
         const lineas = f.lineas.map((l, k) => ({ l, k })).sort((a, b) => (b.l.riesgo - a.l.riesgo) || (a.k - b.k)).map(x => x.l);
         return h('li', { class: 'fila' + (f.bloqueo ? (f.nada ? ' cat-ya' : ' cat-no') : (puesta || nq) ? ' cat-add' : '') },
-          h('input', { type: 'checkbox', id: idc, class: 'marca', checked: puesta, disabled: !!f.bloqueo || !f.uris.length || !!S.tarea, 'aria-label': 'Añadir a ' + (f.nombre || f.nombreSx),
-            onchange: e => { pon(plan.marcadas, f.clave, e.target.checked && !f.bloqueo); pinta(); } }),
+          conCasilla
+            ? h('input', { type: 'checkbox', id: idc, class: 'marca', checked: puesta, disabled: !!S.tarea, 'aria-label': 'Añadir a ' + (f.nombre || f.nombreSx),
+              onchange: e => { pon(plan.marcadas, f.clave, e.target.checked && !f.bloqueo); pinta(); } })
+            : h('span', { class: 'marca-hueco', 'aria-hidden': 'true' }),
           h('div', { class: 'fila-cuerpo' },
-            h('label', { class: 'fila-titulo', for: idc }, f.nombreSx + ' → ' + (f.nombre || 'sin pareja')),
+            conCasilla ? h('label', { class: 'fila-titulo', for: idc }, f.nombreSx + ' → ' + (f.nombre || 'sin pareja')) : h('div', { class: 'fila-titulo' }, f.nombreSx + ' → ' + (f.nombre || 'sin pareja')),
             f.bloqueo
-              ? h('div', { class: f.nada ? 'fila-sub' : 'fila-nota' }, f.nada ? 'Nada que añadir ni que quitar: no se puede marcar.' : 'No se puede marcar: ' + f.bloqueo)
-              : [h('div', { class: 'fila-sub' }, 'En Spotify es ' + visib(f.publica) + ' y tiene ' + canciones(f.tiene) + '. Se añadirían ' + f.uris.length + (avisos ? ' (' + avisos + ' con aviso)' : '') + (f.lineasQ.length ? '. Se propone quitar ' + f.lineasQ.length : '') + '.'),
+              ? h('div', { class: f.nada ? 'fila-sub' : 'fila-nota' }, f.nada ? 'Nada que añadir ni que quitar.' : 'No se puede marcar: ' + f.bloqueo)
+              : [h('div', { class: 'fila-sub' }, 'En Spotify es ' + visib(f.publica) + ' y tiene ' + canciones(f.tiene) + '. ' +
+                  (f.uris.length ? (f.uris.length === 1 ? 'Se añadiría 1' : 'Se añadirían ' + f.uris.length) + (avisos ? ' (' + avisos + ' con aviso)' : '') + '. Para añadir' + (f.uris.length === 1 ? 'la' : 'las') + ', marca la casilla de esta fila.' : 'Nada que añadir.') +
+                  (f.lineasQ.length ? ' Se propone quitar ' + f.lineasQ.length + ': ' + (f.lineasQ.length === 1 ? 'tiene su casilla' : 'cada una tiene su casilla') + ', aquí abajo.' : '')),
                 f.uris.length > 0 && h('div', { class: 'fila-acc' }, h('button', { class: 'btn mini sec', type: 'button', disabled: !!S.tarea, onclick: () => { S.planBVer = S.planBVer === f.clave ? null : f.clave; pinta(); } },
                   S.planBVer === f.clave ? 'Ocultar' : (f.uris.length === 1 ? 'Ver la canción' : 'Ver las ' + f.uris.length))),
                 S.planBVer === f.clave && h('ul', { class: 'plan-canc' }, lineas.map(l =>

@@ -63,7 +63,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
 
   // --- arranque ---
   let t = await cuerpo(page);
-  es(/v0\.6\.0/.test(t), 'se ve el número de versión');
+  es(/v0\.6\.1/.test(t), 'se ve el número de versión');
   es(/Solo lectura/.test(t), 'se ve el indicador de solo lectura');
   es(/Sin conectar en este dispositivo/.test(t), 'empieza sin conectar');
   await foto(page, 'cuentas-vacio' + sufijo);
@@ -330,7 +330,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   await pestana(page, 'Diagnóstico');
   const diag = await page.locator('#diag').inputValue();
   es(/Permiso de escritura en este dispositivo: sí/.test(diag) && /Sincronización: sin hacer/.test(diag) && /añade a «NS -» y «OG -»; añade y quita en Sound All, Sound Down y Sound Try; todo con confirmación/.test(diag), 'el diagnóstico dice si hay permiso de escritura y si se ha sincronizado');
-  es(/SynchroSound 0\.6\.0/.test(diag) && /buscador v5/.test(diag) && /escrituras enviadas: 0/.test(diag) && /Simulación/.test(diag) && diag.indexOf('Dudosas (' + (nD - 2) + ')') >= 0, 'el diagnóstico lleva versión, recuentos y dudosas');
+  es(/SynchroSound 0\.6\.1/.test(diag) && /buscador v5/.test(diag) && /escrituras enviadas: 0/.test(diag) && /Simulación/.test(diag) && diag.indexOf('Dudosas (' + (nD - 2) + ')') >= 0, 'el diagnóstico lleva versión, recuentos y dudosas');
   const usoLs = await page.evaluate(() => JSON.parse(localStorage.getItem('ss.uso')).n);
   es(usoLs === mundo.spGets && diag.indexOf('Peticiones a Spotify hoy: ' + usoLs + ' entre todos tus dispositivos (este: ' + usoLs + ')') >= 0, 'el contador del día coincide con lo que ha recibido Spotify (' + usoLs + ' y ' + mundo.spGets + ')');
   es(/; \d+ peticiones a Spotify\n  playlists releídas: «NS - Techno»\n/.test(diag), 'el diagnóstico dice qué playlists se han releído');
@@ -346,7 +346,7 @@ async function flujoCompleto(titulo, ctxOpc, sufijo) {
   es(diag.indexOf('usuario_prueba') < 0 && diag.indexOf('ejemplo.test') < 0, 'el diagnóstico no lleva el usuario ni el correo');
   await boton(page, 'Copiar').click();
   const porta = await page.evaluate(() => navigator.clipboard.readText()).catch(() => null);
-  if (porta !== null) es(porta.indexOf('SynchroSound 0.6.0') === 0, 'el botón Copiar copia el diagnóstico');
+  if (porta !== null) es(porta.indexOf('SynchroSound 0.6.1') === 0, 'el botón Copiar copia el diagnóstico');
   await foto(page, 'diagnostico' + sufijo);
 
   // --- el candado ---
@@ -1520,7 +1520,7 @@ async function casosSincB() {
   // como cuando él ha tocado Spotify a mano y quiere que la app lo vea: simula leyendo Spotify de nuevo
   const simulaFresca = async x => { const l0 = await x.page.evaluate(() => window.SS.estado.lib.leida); await boton(x.page, 'Simular leyendo Spotify de nuevo').click(); await x.page.waitForFunction(l => !window.SS.estado.tarea && !!window.SS.estado.simB && window.SS.estado.lib.leida !== l, l0, { timeout: 120000 }); };
   const prepara = async x => { await boton(x.page, 'Preparar la sincronización de Soundeo (no envía nada)').click(); await x.page.waitForSelector('#sincb-conf'); };
-  const filaB = (x, nombre) => x.page.locator('#sincb-conf ul.plan > li.fila').filter({ has: x.page.locator('label.fila-titulo', { hasText: new RegExp('^' + nombre + ' → ') }) });
+  const filaB = (x, nombre) => x.page.locator('#sincb-conf ul.plan > li.fila').filter({ has: x.page.locator('.fila-titulo', { hasText: new RegExp('^' + nombre + ' → ') }) });
   const marcaAnadir = (x, nombre) => filaB(x, nombre).locator('> input.marca').click();
   const marcaQuitar = (x, nombre, cancion) => filaB(x, nombre).locator('.plan-quita li', { hasText: cancion }).locator('input.marca').click();
   const confirma = async x => { await x.page.locator('#sincb-conf .acciones .btn', { hasText: /^Confirmar/ }).click(); await libre(x); };
@@ -1578,7 +1578,8 @@ async function casosSincB() {
     'el diagnóstico cuenta el registro de B y lo que haría con cada playlist, y ya no habla de rekordbox al hablar de Soundeo');
   await prepara(x);
   pq = await planQ(x);
-  es(/no hay nada que añadir ni que quitar/.test(pq.all.bloqueo) && /no hay nada/.test(pq.down.bloqueo) && /no hay nada/.test(pq.try.bloqueo) && await x.page.locator('#sincb-conf input.marca:not([disabled])').count() === 0, 'ni nada que marcar');
+  es(/no hay nada que añadir ni que quitar/.test(pq.all.bloqueo) && /no hay nada/.test(pq.down.bloqueo) && /no hay nada/.test(pq.try.bloqueo) && await x.page.locator('#sincb-conf input.marca').count() === 0 &&
+    (await x.page.locator('#sincb-conf').innerText()).split('Nada que añadir ni que quitar.').length === 4, 'ni nada que marcar: no sale ninguna casilla');
   await boton(x.page, 'Cancelar').click();
 
   // ---------- Descarga un favorito y quita la estrella a otro: se propone quitar, canción a canción ----------
@@ -1594,6 +1595,11 @@ async function casosSincB() {
   es(await x.page.locator('.plan-quita li').count() === 3 && await x.page.locator('#sincb-conf input.marca:checked').count() === 0 && /Quitar de Sound Try: Nora Vex — Paper Lanterns/.test(t) && /Por qué: ya la has descargado: pasa a Sound Down \(tu favorito: Nora Vex — Paper Lanterns \(Extended Mix\)\)\./.test(t) &&
     /Todavía no está en Sound Down: solo saldrá de aquí si en esta misma sincronización se añade allí/.test(t) && /Quitar de Sound All: Iris Mar — Solo Me Gusta/.test(t) && /Por qué: ya no es favorita en Soundeo \(tu favorito: Iris Mar - Solo Me Gusta \(Original Mix\)\)\./.test(t),
     'cada canción que se quitaría sale con su playlist, su motivo y su casilla, sin marcar');
+  // la casilla de la fila es la de añadir: donde no hay nada que añadir, no sale (solo quedan las de quitar)
+  es(await filaB(x, 'Sound All').locator('> input.marca').count() === 0 && await filaB(x, 'Sound All').locator('> .marca-hueco').count() === 1 && await filaB(x, 'Sound All').locator('.plan-quita input.marca').count() === 1 &&
+    /Nada que añadir\. Se propone quitar 1: tiene su casilla, aquí abajo\./.test(await filaB(x, 'Sound All').innerText()) && await filaB(x, 'Sound Try').locator('> input.marca').count() === 0 &&
+    /Se propone quitar 2: cada una tiene su casilla, aquí abajo\./.test(await filaB(x, 'Sound Try').innerText()), 'en una playlist sin nada que añadir no sale la casilla de añadir, solo las de quitar, y se dice');
+  es(await filaB(x, 'Sound Down').locator('> input.marca').count() === 1 && /Se añadiría 1( \(1 con aviso\))?\. Para añadirla, marca la casilla de esta fila\./.test(await filaB(x, 'Sound Down').innerText()), 'donde sí hay algo que añadir, la casilla está y la fila dice para qué es');
   dg = await x.page.evaluate(() => window.SS.diagnostico());
   es(/    Sound Try: añadir 0; quitar 2 \(descargadas 1, sin estrella 1, «No es» 0\); quitadas a mano 0/.test(dg) && /    Sound Down: añadir 1; quitar 0;/.test(dg), 'y el diagnóstico dice cuántas se quitarían de cada playlist y por qué');
   // solo marca quitar de Try la descargada, sin añadirla a Down: no sale (todavía no está en Down)
@@ -1619,6 +1625,9 @@ async function casosSincB() {
   es(JSON.stringify(uris(pl(x, 'Sound All'))) === JSON.stringify(['s1', 's2', 's3', 'largaExt', 'cobaltExt', 'paper'].map(U)) && JSON.stringify(uris(pl(x, 'Sound Down'))) === JSON.stringify(['s1', 'largaExt', 'cobaltExt', 's3', 'paper'].map(U)) && JSON.stringify(uris(pl(x, 'Sound Try'))) === JSON.stringify([U('s2')]),
     'la descargada pasa de Try a Down y la que perdió la estrella sale de las que estaba');
   es(/Sincronización de Soundeo completa: añadidas 1 y quitadas 3 en 3 playlists/.test(await cuerpo(x.page)) && /«Sound Try»: añadidas 0 y quitadas 2 de 2 \(3 antes, 1 ahora\)\. Comprobado releyendo la playlist\./.test(await resultado(x)), 'y el resultado lo cuenta');
+  dg = await x.page.evaluate(() => window.SS.diagnostico());
+  es(/  Sound Try \([^)]*\): ok; pedidas 0; antes 3; después 1; añadidas 0; quitar 2; quitadas 2/.test(dg) && /    lote 1 \(quitar\): 2; enviado: sí, una vez; respuesta: 200; .*; cuadra: sí; siguen: 0 de 2/.test(dg) && /  Sound Down \([^)]*\): ok; pedidas 1; antes 4; después 5; añadidas 1\n    lote 1: 1; .*se ven: 1 de 1/.test(dg),
+    'y el diagnóstico dice lo quitado como quitado (y lo añadido, como siempre)');
   es(otras(x) === fuera0, 'las «NS -», las «OG -» y las demás playlists siguen igual');
   M = await sxMem(x);
   es(JSON.stringify(M['9000009'].p) === '{}' && M['9000004'].p.down === U('paper') && M['9000004'].d === 1 && M['9000004'].p.try === undefined && M['9000004'].p.all === U('paper'), 'el registro apunta lo quitado y lo movido');
@@ -1974,7 +1983,7 @@ async function casosSinc() {
   es(t.indexOf(antes[0].ruta.split('/').pop()) >= 0 && t.indexOf(regs[0].ruta.split('/').pop()) >= 0, 'el resultado nombra la copia y el registro');
   await pestana(x.page, 'Diagnóstico');
   dg = await x.page.locator('#diag').inputValue();
-  es(/escrituras enviadas: 1;/.test(dg) && /Sincronización: [^\n]* \(v0\.6\.0\): completa: añadidas 5 canciones en 1 playlist[^\n]*\n  copia previa: antes-de-sincronizar-[^\n]*; registro: sincronizacion-[^\n]*\n  NS - Techno \(pública\): ok; pedidas 5; antes 0; después 5; añadidas 5\n    lote 1: 5; enviado: sí, una vez; respuesta: 201; sello nuevo: sí; relecturas: 1; cuadra: sí; se ven: 5 de 5\n/.test(dg), 'y el diagnóstico lleva la sincronización entera');
+  es(/escrituras enviadas: 1;/.test(dg) && /Sincronización: [^\n]* \(v0\.6\.1\): completa: añadidas 5 canciones en 1 playlist[^\n]*\n  copia previa: antes-de-sincronizar-[^\n]*; registro: sincronizacion-[^\n]*\n  NS - Techno \(pública\): ok; pedidas 5; antes 0; después 5; añadidas 5\n    lote 1: 5; enviado: sí, una vez; respuesta: 201; sello nuevo: sí; relecturas: 1; cuadra: sí; se ven: 5 de 5\n/.test(dg), 'y el diagnóstico lleva la sincronización entera');
   es((await x.page.evaluate(() => JSON.parse(localStorage.getItem('ss.uso')).n)) === x.mundo.spGets + 1, 'la escritura cuenta en las peticiones del día');
   await x.page.locator('.candado').click();
   t = await x.page.locator('.candado-panel').innerText();
